@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "294224939799",
+    "project_id": "mysimtek-pelanggan",
+    "storage_bucket": "mysimtek-pelanggan.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:294224939799:android:f6978b1164d5c78d8f4552",
+        "android_client_info": {
+          "package_name": "com.mysimtek.pelanggan"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD0xuVlMTX5h_HEmaHvCXh7psfohaJkcCQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:294224939799:android:44449974632c8f8b8f4552",
+        "android_client_info": {
+          "package_name": "com.mysimtek.teknisi.mysimtek_teknisi"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD0xuVlMTX5h_HEmaHvCXh7psfohaJkcCQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
