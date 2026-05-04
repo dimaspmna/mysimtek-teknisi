@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/models/ticket_model.dart';
 import '../../../../core/services/api_service.dart';
@@ -253,6 +254,41 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
     );
   }
 
+  Future<void> _openInGoogleMaps({
+    required double lat,
+    required double lng,
+    required String label,
+  }) async {
+    final encodedLabel = Uri.encodeComponent(label);
+    final geoUri = Uri.parse('geo:$lat,$lng?q=$lat,$lng($encodedLabel)');
+    final webUri = Uri.parse(
+      'https://www.google.com/maps/search/?api=1&query=$lat,$lng',
+    );
+
+    try {
+      final openedGeo = await launchUrl(
+        geoUri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (openedGeo) return;
+
+      final openedWeb = await launchUrl(
+        webUri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (openedWeb) return;
+    } catch (_) {
+      // Fallback handled below with snackbar.
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Google Maps tidak dapat dibuka di perangkat ini.'),
+      ),
+    );
+  }
+
   Color _statusColor(String? status) {
     switch (status) {
       case 'open':
@@ -399,6 +435,9 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
         children: [
           // Claim banner
           if (t.isClaimable) _buildClaimBanner(),
+          // Progress tracking
+          if (t.assignedTo != null) _buildProgressTracking(t),
+          if (t.assignedTo != null) const SizedBox(height: 12),
           // Customer card
           _buildCustomerCard(t),
           const SizedBox(height: 12),
@@ -506,6 +545,12 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
   }
 
   Widget _buildCustomerCard(Ticket t) {
+    final hasCoordinate =
+        t.customerLat != null &&
+        t.customerLng != null &&
+        t.customerLat != 0 &&
+        t.customerLng != 0;
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -572,6 +617,32 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
                     ),
                   ),
                 ],
+              ),
+            ),
+          if (hasCoordinate)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    _openInGoogleMaps(
+                      lat: t.customerLat!,
+                      lng: t.customerLng!,
+                      label: t.customerName ?? 'Lokasi Pelanggan',
+                    );
+                  },
+                  icon: const Icon(Icons.map_outlined, size: 18),
+                  label: const Text('Maps'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.info,
+                    side: const BorderSide(color: AppColors.info),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
               ),
             ),
         ],
@@ -1314,6 +1385,121 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildProgressTracking(Ticket t) {
+    final fieldStepByStatus = <String, int>{
+      'preparing': 1,
+      'on_the_way': 2,
+      'working': 3,
+      'fixed': 4,
+    };
+    final currentFieldStep = fieldStepByStatus[t.fieldStatus];
+
+    final steps = [
+      (label: 'Tiket Diambil', done: true),
+      (
+        label: 'Persiapan',
+        done: currentFieldStep != null && currentFieldStep >= 1,
+      ),
+      (
+        label: 'Menuju Lokasi',
+        done: currentFieldStep != null && currentFieldStep >= 2,
+      ),
+      (
+        label: 'Perbaikan',
+        done: currentFieldStep != null && currentFieldStep >= 3,
+      ),
+      (
+        label: 'Selesai',
+        done: currentFieldStep != null && currentFieldStep >= 4,
+      ),
+    ];
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Progress Pekerjaan',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              for (int i = 0; i < steps.length; i++) ...[
+                Expanded(
+                  flex: 3,
+                  child: Column(
+                    children: [
+                      Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: steps[i].done
+                              ? AppColors.success
+                              : const Color(0xFFF1F5F9),
+                          shape: BoxShape.circle,
+                        ),
+                        child: steps[i].done
+                            ? const Icon(
+                                Icons.check,
+                                size: 15,
+                                color: Colors.white,
+                              )
+                            : const Center(
+                                child: SizedBox(
+                                  width: 8,
+                                  height: 8,
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      color: Color(0xFFCBD5E1),
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        steps[i].label,
+                        style: const TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.textPrimary,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+                if (i < steps.length - 1)
+                  Expanded(
+                    flex: 1,
+                    child: Container(
+                      height: 2,
+                      margin: const EdgeInsets.only(bottom: 20),
+                      color: (steps[i].done && steps[i + 1].done)
+                          ? AppColors.success.withOpacity(0.35)
+                          : const Color(0xFFF1F5F9),
+                    ),
+                  ),
+              ],
+            ],
+          ),
+        ],
+      ),
     );
   }
 

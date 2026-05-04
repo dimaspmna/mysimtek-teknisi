@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/providers/auth_provider.dart';
 import 'akun/informasi_akun_screen.dart';
+import 'akun/change_password_screen.dart';
 import 'akun/webview_screen.dart';
 
 class AkunScreen extends StatelessWidget {
@@ -174,9 +175,14 @@ class AkunScreen extends StatelessWidget {
           const SizedBox(height: 12),
           _buildMenuItem(
             icon: Icons.lock_outline,
-            title: 'Ubah Password',
+            title: 'Ubah Kata Sandi',
             onTap: () {
-              // TODO: Navigate to change password
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ChangePasswordScreen(),
+                ),
+              );
             },
           ),
           const SizedBox(height: 8),
