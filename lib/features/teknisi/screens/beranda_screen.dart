@@ -4,7 +4,11 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/constants/app_colors.dart';
+import '../../../core/providers/attendance_provider.dart';
 import '../../../core/providers/auth_provider.dart';
+import '../../../core/providers/gps_tracking_provider.dart';
+import '../../../core/services/location_streaming_service.dart';
+import '../../../core/widgets/tracking_status_card.dart';
 import '../../../core/models/ticket_model.dart';
 import '../../../core/services/api_service.dart';
 import '../../../core/services/fcm_service.dart';
@@ -142,6 +146,7 @@ class _BerandaScreenState extends State<BerandaScreen> {
     _startPeriodicRefresh();
     unawaited(_fetchUnreadNotificationCount());
     _fetchTickets();
+    _fetchAttendance();
   }
 
   @override
@@ -220,6 +225,12 @@ class _BerandaScreenState extends State<BerandaScreen> {
         _isLoading = false;
       });
     }
+  }
+
+  void _fetchAttendance() {
+    final email = context.read<AuthProvider>().user?.email;
+    if (email == null || email.isEmpty) return;
+    context.read<AttendanceProvider>().fetchToday(email);
   }
 
   @override
@@ -332,18 +343,27 @@ class _BerandaScreenState extends State<BerandaScreen> {
                 children: [
                   const Icon(Icons.engineering, color: Colors.white, size: 20),
                   const SizedBox(width: 8),
-                  Text.rich(
-                    TextSpan(
-                      text: 'Teknisi ',
-                      style: const TextStyle(fontWeight: FontWeight.w400),
-                      children: [
-                        TextSpan(
-                          text: user?.name ?? 'Teknisi',
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ],
+                  Expanded(
+                    child: Text.rich(
+                      TextSpan(
+                        text: 'Teknisi ',
+                        style: const TextStyle(fontWeight: FontWeight.w400),
+                        children: [
+                          TextSpan(
+                            text: user?.name ?? 'Teknisi',
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ],
+                      ),
+                      style: const TextStyle(fontSize: 14, color: Colors.white),
                     ),
-                    style: const TextStyle(fontSize: 14, color: Colors.white),
+                  ),
+                  Consumer<AttendanceProvider>(
+                    builder: (_, attendance, __) {
+                      if (attendance.status == null)
+                        return const SizedBox.shrink();
+                      return _AttendanceBadge(status: attendance.status!);
+                    },
                   ),
                 ],
               ),
@@ -354,33 +374,49 @@ class _BerandaScreenState extends State<BerandaScreen> {
             Row(
               children: [
                 Expanded(
-                  child: _buildStatCard(
+                  child: _buildStatRow(
                     title: 'Tiket TRB Tersedia',
                     count: _isLoading ? '-' : '${_getTrbAvailableCount()}',
-                    color: AppColors.primary,
+                    countColor: AppColors.error,
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: _buildStatCard(
+                  child: _buildStatRow(
                     title: 'Tiket PSB Tersedia',
                     count: _isLoading ? '-' : '${_getPsbAvailableCount()}',
-                    color: AppColors.primary,
+                    countColor: AppColors.info,
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: _buildStatCard(
-                    title: 'Riwayat Tugas Teknisi',
+                  child: _buildStatRow(
+                    title: 'Riwayat Tugas',
                     count: _isLoading
                         ? '-'
                         : '${_getCompletedTakenCount(userId)}',
-                    color: AppColors.primary,
+                    countColor: AppColors.success,
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 20),
+
+            // GPS Tracking status (visible when GPS is active for any ticket)
+            Consumer<GpsTrackingProvider>(
+              builder: (_, gps, __) {
+                if (gps.activeTicketId == null) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: TrackingStatusCard(
+                    status: gps.isRunning ? gps.status : TrackingStatus.idle,
+                    lastPush: gps.lastPush,
+                    retryCount: gps.retryCount,
+                    onRestart: () => gps.restartTracking(),
+                  ),
+                );
+              },
+            ),
 
             // // Menu Grid
             // const Text(
@@ -420,7 +456,7 @@ class _BerandaScreenState extends State<BerandaScreen> {
                   child: _buildMenuCard(
                     icon: Icons.map,
                     title: 'Peta\nArea',
-                    color: Colors.green,
+                    color: Colors.yellow.shade700,
                     onTap: () {
                       _pushAndRefresh(context, const PetaAreaScreen());
                     },
@@ -431,7 +467,7 @@ class _BerandaScreenState extends State<BerandaScreen> {
                   child: _buildMenuCard(
                     icon: Icons.history,
                     title: 'Riwayat\nTugas',
-                    color: Colors.yellow.shade700,
+                    color: Colors.green,
                     onTap: () {
                       _pushAndRefresh(context, const RiwayatTugasScreen());
                     },
@@ -551,38 +587,37 @@ class _BerandaScreenState extends State<BerandaScreen> {
     );
   }
 
-  Widget _buildStatCard({
+  Widget _buildStatRow({
     required String title,
     required String count,
-    required Color color,
+    required Color countColor,
   }) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.cardBorder),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            count,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-            ),
+      child: Text.rich(
+        TextSpan(
+          text: '$title ',
+          style: const TextStyle(
+            fontSize: 11,
+            color: AppColors.textSecondary,
+            height: 1.4,
           ),
-          const SizedBox(height: 2),
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 10,
-              color: AppColors.textSecondary,
+          children: [
+            TextSpan(
+              text: '($count)',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: countColor,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -736,6 +771,25 @@ class _BerandaScreenState extends State<BerandaScreen> {
                       ),
                     ),
                   ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.success.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      'Aktif',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.success,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -1106,6 +1160,52 @@ class _BerandaLifecycleObserver extends WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       onResume();
+    }
+  }
+}
+
+/// Badge status kehadiran untuk welcome card.
+class _AttendanceBadge extends StatelessWidget {
+  const _AttendanceBadge({required this.status});
+
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color) = _resolve(status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: Colors.white,
+        ),
+      ),
+    );
+  }
+
+  static (String, Color) _resolve(String status) {
+    switch (status.toLowerCase()) {
+      case 'hadir':
+        return ('Hadir', const Color(0xFF22C55E));
+      case 'terlambat':
+        return ('Terlambat', const Color(0xFFF59E0B));
+      case 'izin':
+        return ('Izin', const Color(0xFF60A5FA));
+      case 'sakit':
+        return ('Sakit', const Color(0xFFC084FC));
+      case 'libur':
+        return ('Libur', const Color(0xFF9CA3AF));
+      case 'absent':
+        return ('Tidak Hadir', const Color(0xFFFC8181));
+      default:
+        return (status, const Color(0xFF9CA3AF));
     }
   }
 }

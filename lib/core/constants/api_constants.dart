@@ -23,6 +23,8 @@ class ApiConstants {
   static String teknisiTicketDetail(dynamic id) => '/teknisi/tickets/$id';
   static String teknisiTicketClaim(dynamic id) => '/teknisi/tickets/$id/claim';
   static String teknisiTicketStart(dynamic id) => '/teknisi/tickets/$id/start';
+  static String teknisiTicketLocation(dynamic id) =>
+      '/teknisi/tickets/$id/location';
   static String teknisiTicketFieldReport(dynamic id) =>
       '/teknisi/tickets/$id/field-report';
   static String teknisiTicketMessages(dynamic id) =>
@@ -36,6 +38,8 @@ class ApiConstants {
       '/teknisi/psb-tickets/$id/claim';
   static String teknisiPsbTicketStart(dynamic id) =>
       '/teknisi/psb-tickets/$id/start';
+  static String teknisiPsbTicketLocation(dynamic id) =>
+      '/teknisi/psb-tickets/$id/location';
   static String teknisiPsbFieldReport(dynamic id) =>
       '/teknisi/psb-tickets/$id/field-report';
   static String teknisiPsbMessages(dynamic id) =>

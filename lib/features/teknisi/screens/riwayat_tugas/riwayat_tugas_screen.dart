@@ -258,37 +258,45 @@ class _RiwayatTugasScreenState extends State<RiwayatTugasScreen> {
     required IconData icon,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(10),
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.2)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Icon(icon, color: Colors.white, size: 18),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: color, size: 18),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  value.toString(),
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: color,
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value.toString(),
-            style: const TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              color: Colors.white,
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: color.withOpacity(0.8),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -296,215 +304,232 @@ class _RiwayatTugasScreenState extends State<RiwayatTugasScreen> {
     );
   }
 
-  Widget _buildTimeRow({
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
-    return Row(
-      children: [
-        Icon(icon, size: 13, color: AppColors.textSecondary),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(
-            '$label: $value',
-            style: const TextStyle(
-              fontSize: 11,
-              color: AppColors.textSecondary,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildTrbTicketCard(Ticket ticket) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: () async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => TiketTrbDetailScreen(ticketId: ticket.id),
-            ),
-          );
-          _fetchTickets();
-        },
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: AppColors.cardBorder),
+    return _TicketCard(
+      type: 'TRB',
+      typeColor: AppColors.error,
+      ticketNumber: ticket.ticketNumber,
+      title: ticket.subject,
+      customerName: ticket.customerName,
+      dispatchedAt: ticket.technicianDispatchedAt,
+      resolvedAt: ticket.resolvedAt,
+      formatDateTime: _formatDateTime,
+      onTap: () async {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TiketTrbDetailScreen(ticketId: ticket.id),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      ticket.ticketNumber,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      ticket.subject,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      ticket.customerName ?? '-',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    _buildTimeRow(
-                      icon: Icons.login,
-                      label: 'Diambil',
-                      value: _formatDateTime(ticket.technicianDispatchedAt),
-                    ),
-                    const SizedBox(height: 4),
-                    _buildTimeRow(
-                      icon: Icons.check_circle_outline,
-                      label: 'Selesai',
-                      value: _formatDateTime(ticket.resolvedAt),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: const [
-                  Text(
-                    'TRB',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.red,
-                    ),
-                  ),
-                  SizedBox(height: 6),
-                  Icon(
-                    Icons.chevron_right,
-                    size: 18,
-                    color: AppColors.textSecondary,
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
+        );
+        _fetchTickets();
+      },
     );
   }
 
   Widget _buildPsbTicketCard(PsbTicket ticket) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: () async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => TiketPsbDetailScreen(ticketId: ticket.id),
-            ),
-          );
-          _fetchTickets();
-        },
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: AppColors.cardBorder),
+    return _TicketCard(
+      type: 'PSB',
+      typeColor: AppColors.info,
+      ticketNumber: ticket.ticketNumber,
+      title: ticket.servicePackage ?? ticket.subject,
+      customerName: ticket.customerName,
+      dispatchedAt: ticket.technicianDispatchedAt,
+      resolvedAt: ticket.resolvedAt,
+      formatDateTime: _formatDateTime,
+      onTap: () async {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TiketPsbDetailScreen(ticketId: ticket.id),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+        );
+        _fetchTickets();
+      },
+    );
+  }
+}
+
+class _TicketCard extends StatelessWidget {
+  const _TicketCard({
+    required this.type,
+    required this.typeColor,
+    required this.ticketNumber,
+    required this.title,
+    required this.customerName,
+    required this.dispatchedAt,
+    required this.resolvedAt,
+    required this.formatDateTime,
+    required this.onTap,
+  });
+
+  final String type;
+  final Color typeColor;
+  final String ticketNumber;
+  final String title;
+  final String? customerName;
+  final DateTime? dispatchedAt;
+  final DateTime? resolvedAt;
+  final String Function(DateTime?) formatDateTime;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header row: ticket number + type badge
+                Row(
                   children: [
                     Text(
-                      ticket.ticketNumber,
+                      ticketNumber,
                       style: const TextStyle(
                         fontSize: 11,
+                        fontWeight: FontWeight.w500,
                         color: AppColors.textSecondary,
+                        letterSpacing: 0.3,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      ticket.servicePackage ?? ticket.subject,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      ticket.customerName ?? '-',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
+                      decoration: BoxDecoration(
+                        color: typeColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(6),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    _buildTimeRow(
-                      icon: Icons.login,
-                      label: 'Diambil',
-                      value: _formatDateTime(ticket.technicianDispatchedAt),
-                    ),
-                    const SizedBox(height: 4),
-                    _buildTimeRow(
-                      icon: Icons.check_circle_outline,
-                      label: 'Selesai',
-                      value: _formatDateTime(ticket.resolvedAt),
+                      child: Text(
+                        type,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: typeColor,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: const [
-                  Text(
-                    'PSB',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.blue,
-                    ),
+                const SizedBox(height: 8),
+                // Title
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
                   ),
-                  SizedBox(height: 6),
-                  Icon(
-                    Icons.chevron_right,
-                    size: 18,
-                    color: AppColors.textSecondary,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (customerName != null && customerName!.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.person_outline,
+                        size: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        customerName!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
-              ),
-            ],
+                const SizedBox(height: 10),
+                // Divider
+                const Divider(
+                  height: 1,
+                  thickness: 1,
+                  color: AppColors.cardBorder,
+                ),
+                const SizedBox(height: 10),
+                // Time rows
+                Row(
+                  children: [
+                    Expanded(
+                      child: _timeInfo(
+                        label: 'Diambil',
+                        value: formatDateTime(dispatchedAt),
+                      ),
+                    ),
+                    Container(
+                      width: 1,
+                      height: 28,
+                      color: AppColors.cardBorder,
+                      margin: const EdgeInsets.symmetric(horizontal: 10),
+                    ),
+                    Expanded(
+                      child: _timeInfo(
+                        label: 'Selesai',
+                        value: formatDateTime(resolvedAt),
+                        valueColor: AppColors.success,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(
+                      Icons.chevron_right,
+                      size: 16,
+                      color: AppColors.textSecondary,
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _timeInfo({
+    required String label,
+    required String value,
+    Color? valueColor,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 10,
+            color: AppColors.textSecondary,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: valueColor ?? AppColors.textPrimary,
+          ),
+        ),
+      ],
     );
   }
 }

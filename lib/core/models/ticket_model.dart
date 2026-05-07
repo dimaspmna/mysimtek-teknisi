@@ -162,6 +162,8 @@ class Ticket {
   final String? odpName;
   final DateTime? technicianDispatchedAt;
   final DateTime? resolvedAt;
+  final bool gpsEnabled;
+  final DateTime? startedAt;
   final List<TicketMessage> messages;
   final List<TicketPhoto> photos;
   final DateTime createdAt;
@@ -193,6 +195,8 @@ class Ticket {
     this.odpName,
     this.technicianDispatchedAt,
     this.resolvedAt,
+    this.gpsEnabled = false,
+    this.startedAt,
     this.messages = const [],
     this.photos = const [],
     required this.createdAt,
@@ -249,6 +253,10 @@ class Ticket {
           : null,
       resolvedAt: json['resolved_at'] != null
           ? DateTime.tryParse(json['resolved_at'] as String)
+          : null,
+      gpsEnabled: json['gps_enabled'] == true || json['gps_enabled'] == 1,
+      startedAt: json['started_at'] != null
+          ? DateTime.tryParse(json['started_at'] as String)
           : null,
       messages: msgList,
       photos: photoList,
@@ -311,14 +319,12 @@ class PsbTicket {
   });
 
   bool get isClaimable {
-    const claimableStatuses = {'pending', 'open', 'scheduled'};
-    return assignedTo == null && claimableStatuses.contains(status);
+    return assignedTo == null && status == 'open';
   }
 
   bool get isFinished {
-    const finishedStatuses = {'completed', 'activated', 'closed', 'cancelled'};
-    if (finishedStatuses.contains(status)) return true;
-    return statusLabel.toLowerCase().contains('selesai');
+    const finishedStatuses = {'done', 'closed'};
+    return finishedStatuses.contains(status);
   }
 
   factory PsbTicket.fromJson(Map<String, dynamic> json) {

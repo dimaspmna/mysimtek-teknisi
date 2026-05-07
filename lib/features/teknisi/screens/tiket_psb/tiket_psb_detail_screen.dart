@@ -1,13 +1,22 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/providers/auth_provider.dart';
+import '../../../../core/providers/gps_tracking_provider.dart';
+import '../../../../core/constants/api_constants.dart';
 import '../../../../core/models/ticket_model.dart';
 import '../../../../core/services/api_service.dart';
 import '../../../../core/services/storage_service.dart';
 import '../../../../core/services/ticket_service.dart';
+import '../../../../core/services/location_streaming_service.dart';
+import '../../../../core/widgets/gps_permission_modal.dart';
+import '../../../../core/widgets/slide_to_start_button.dart';
+import '../../../../core/widgets/tracking_status_card.dart';
 
 class TiketPsbDetailScreen extends StatefulWidget {
   final int ticketId;
@@ -27,11 +36,16 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
   bool _isLoading = true;
   bool _isActing = false;
   String? _errorMessage;
+  bool _hasActiveTicket = false;
+  String? _activeTicketNumber;
 
   String _selectedFieldStatus = 'working';
   final _notesController = TextEditingController();
   final _captionController = TextEditingController();
   File? _selectedPhoto;
+
+  // GPS Tracking
+  bool _isStartingTracking = false;
 
   final _scrollController = ScrollController();
 
@@ -39,7 +53,7 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
     ('preparing', 'Sedang Persiapan'),
     ('on_the_way', 'Menuju Lokasi'),
     ('working', 'Sedang Dikerjakan'),
-    ('fixed', 'SELESAI'),
+    ('done', 'Pemasangan Selesai'),
     ('waiting_parts', 'Menunggu Alat'),
     ('other', 'Lainnya'),
   ];
@@ -47,6 +61,7 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
   String _normalizeFieldStatus(String? status) {
     if (status == null || status.isEmpty) return 'working';
     if (status == 'pending') return 'preparing';
+    if (status == 'fixed') return 'done'; // legacy mapping
     final available = _fieldStatusOptions.map((opt) => opt.$1).toSet();
     if (available.contains(status)) return status;
     return 'other';
@@ -55,7 +70,7 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     final storage = StorageService();
     _ticketService = TicketService(ApiService(storage));
     _fetchTicket();
@@ -78,17 +93,103 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
 
     try {
       final ticket = await _ticketService.getPsbTicketDetail(widget.ticketId);
+      await _checkActiveTickets();
       setState(() {
         _ticket = ticket;
         _isLoading = false;
         _selectedFieldStatus = _normalizeFieldStatus(ticket.fieldStatus);
       });
+      _ensureGpsRunning(ticket);
     } catch (e) {
       setState(() {
         _errorMessage = e.toString();
         _isLoading = false;
       });
     }
+  }
+
+  Future<void> _checkActiveTickets() async {
+    try {
+      final storage = StorageService();
+      final api = ApiService(storage);
+      final ticketService = TicketService(api);
+
+      // Get all TRB and PSB tickets
+      final trbTickets = await ticketService.getTrbTickets();
+      final psbTickets = await ticketService.getPsbTickets();
+
+      // Get user ID from auth
+      final user = context.read<AuthProvider>().user;
+      final userId = user?.id;
+
+      if (userId == null) return;
+
+      // Check for active TRB tickets
+      final activeTrb = trbTickets.where((t) {
+        if (t.assignedTo != userId) return false;
+        final status = t.status.toLowerCase();
+        return !const {
+          'resolved',
+          'closed',
+          'done',
+          'completed',
+          'cancelled',
+        }.contains(status);
+      }).toList();
+
+      // Check for active PSB tickets
+      final activePsb = psbTickets.where((t) {
+        if (t.id == widget.ticketId) return false; // Skip current ticket
+        if (t.assignedTo != userId) return false;
+        return !t.isFinished && t.status.toLowerCase() != 'cancelled';
+      }).toList();
+
+      if (activeTrb.isNotEmpty) {
+        setState(() {
+          _hasActiveTicket = true;
+          _activeTicketNumber = activeTrb.first.ticketNumber;
+        });
+      } else if (activePsb.isNotEmpty) {
+        setState(() {
+          _hasActiveTicket = true;
+          _activeTicketNumber = activePsb.first.ticketNumber;
+        });
+      } else {
+        setState(() {
+          _hasActiveTicket = false;
+          _activeTicketNumber = null;
+        });
+      }
+    } catch (e) {
+      // Silently fail - don't block the main flow
+    }
+  }
+
+  /// Auto-start GPS tracking if ticket is in_progress, permission granted, and not already tracking.
+  Future<void> _ensureGpsRunning(PsbTicket ticket) async {
+    final isActive =
+        ticket.assignedTo != null &&
+        ticket.fieldStatus != null &&
+        ticket.fieldStatus != 'pending' &&
+        ticket.fieldStatus != 'done' &&
+        !ticket.isFinished;
+    if (!isActive) return;
+
+    final gps = context.read<GpsTrackingProvider>();
+    if (gps.isRunning && gps.activeTicketId == widget.ticketId) return;
+
+    // Only auto-start if permission is already granted — don't prompt silently
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return;
+    final permission = await Geolocator.checkPermission();
+    if (permission != LocationPermission.always &&
+        permission != LocationPermission.whileInUse)
+      return;
+
+    await gps.startTracking(
+      widget.ticketId,
+      endpoint: ApiConstants.teknisiPsbTicketLocation(widget.ticketId),
+    );
   }
 
   Future<void> _claimTicket() async {
@@ -111,6 +212,14 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
 
   Future<void> _confirmClaimTicket() async {
     if (_isActing) return;
+
+    // Check if user already has active ticket
+    if (_hasActiveTicket) {
+      _showSnack(
+        'Anda sudah memiliki tiket aktif ($_activeTicketNumber). Selesaikan tiket tersebut terlebih dahulu.',
+      );
+      return;
+    }
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -137,23 +246,63 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
     }
   }
 
-  bool _canStartPsb(PsbTicket t) {
-    if (t.assignedTo == null) return false;
-    const waitingStatuses = {'pending', 'scheduled'};
-    return waitingStatuses.contains(t.status);
+  /// Manual GPS refresh — requests permission via modal then (re)starts tracking.
+  Future<void> _refreshGps() async {
+    if (!mounted) return;
+    final pos = await showGpsPermissionModal(context);
+    if (pos == null) {
+      _showSnack('Izin lokasi diperlukan untuk tracking GPS.');
+      return;
+    }
+    if (!mounted) return;
+    final gps = context.read<GpsTrackingProvider>();
+    await gps.startTracking(
+      widget.ticketId,
+      endpoint: ApiConstants.teknisiPsbTicketLocation(widget.ticketId),
+    );
   }
 
-  Future<void> _startPsb() async {
-    setState(() => _isActing = true);
+  Future<void> _startPsbWithTracking() async {
+    if (_isStartingTracking) return;
+    setState(() => _isStartingTracking = true);
+
+    Position? initialPos;
+    if (mounted) {
+      initialPos = await showGpsPermissionModal(context);
+    }
+
     try {
-      final updated = await _ticketService.startPsb(widget.ticketId);
+      final storage = StorageService();
+      final api = ApiService(storage);
+
+      final body = <String, dynamic>{'gps_enabled': initialPos != null};
+      if (initialPos != null) {
+        body['latitude'] = initialPos.latitude;
+        body['longitude'] = initialPos.longitude;
+        body['accuracy'] = initialPos.accuracy;
+      }
+
+      await api.post(ApiConstants.teknisiPsbTicketStart(widget.ticketId), body);
+
+      // Refresh full ticket after start
+      final updatedTicket = await _ticketService.getPsbTicketDetail(
+        widget.ticketId,
+      );
       setState(() {
-        _ticket = updated;
-        _isActing = false;
+        _ticket = updatedTicket;
+        _isStartingTracking = false;
       });
-      _showSnack('Pekerjaan PSB dimulai.', isError: false);
+
+      if (initialPos != null && mounted) {
+        await context.read<GpsTrackingProvider>().startTracking(
+          widget.ticketId,
+          endpoint: ApiConstants.teknisiPsbTicketLocation(widget.ticketId),
+        );
+      }
+
+      _showSnack('Pekerjaan PSB dimulai!', isError: false);
     } catch (e) {
-      setState(() => _isActing = false);
+      setState(() => _isStartingTracking = false);
       _showSnack(e.toString());
     }
   }
@@ -182,7 +331,7 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
         fieldStatus: _selectedFieldStatus,
         fieldNotes: fieldNotes,
         photo: _selectedPhoto!,
-        photoType: 'installation',
+        photoType: 'progress',
         caption: caption,
       );
       _notesController.clear();
@@ -192,6 +341,61 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
         _isActing = false;
       });
       _showSnack('Laporan dan foto berhasil disimpan.', isError: false);
+
+      // Auto-stop GPS and show dialog when work is marked as done
+      if (_selectedFieldStatus == 'done') {
+        if (mounted) context.read<GpsTrackingProvider>().stopTracking();
+        if (mounted) {
+          await showDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder: (ctx) => AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.check_circle_outline,
+                    size: 56,
+                    color: Color(0xFF22C55E),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Pekerjaan Selesai!',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'GPS tracking telah dinonaktifkan secara otomatis. Terima kasih.',
+                    style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+              actions: [
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF22C55E),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text('OK'),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+      }
+
       _fetchTicket();
     } catch (e) {
       setState(() => _isActing = false);
@@ -396,11 +600,15 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
           ),
           tabs: [
             const Tab(icon: Icon(Icons.info_outline, size: 18), text: 'Info'),
+            const Tab(
+              icon: Icon(Icons.assignment_outlined, size: 18),
+              text: 'Laporan',
+            ),
             Tab(
-              icon: const Icon(Icons.assignment_outlined, size: 18),
+              icon: const Icon(Icons.photo_library_outlined, size: 18),
               text: _ticket != null
-                  ? 'Laporan (${_ticket!.photos.length})'
-                  : 'Laporan',
+                  ? 'Bukti (${_ticket!.photos.length})'
+                  : 'Bukti',
             ),
             const Tab(
               icon: Icon(Icons.chat_outlined, size: 18),
@@ -418,6 +626,7 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
               children: [
                 _buildInfoTab(),
                 _buildLaporanTab(),
+                _buildBuktiFotoTab(),
                 _buildThreadTab(),
               ],
             ),
@@ -461,7 +670,34 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
         padding: const EdgeInsets.all(16),
         children: [
           if (t.isClaimable) _buildClaimBanner(),
-          if (_canStartPsb(t)) _buildStartBanner(),
+          if (!t.isClaimable &&
+              t.assignedTo != null &&
+              (t.fieldStatus == null || t.fieldStatus == 'pending'))
+            _buildStartBanner(),
+          // GPS Tracking status card
+          if (t.assignedTo != null &&
+              t.fieldStatus != null &&
+              t.fieldStatus != 'pending' &&
+              t.fieldStatus != 'done' &&
+              !t.isFinished) ...[
+            const SizedBox(height: 8),
+            Consumer<GpsTrackingProvider>(
+              builder: (_, gps, __) {
+                final isActive =
+                    gps.isRunning && gps.activeTicketId == widget.ticketId;
+                return TrackingStatusCard(
+                  status: isActive ? gps.status : TrackingStatus.idle,
+                  lastPush: gps.activeTicketId == widget.ticketId
+                      ? gps.lastPush
+                      : null,
+                  retryCount: gps.activeTicketId == widget.ticketId
+                      ? gps.retryCount
+                      : 0,
+                  onRestart: _refreshGps,
+                );
+              },
+            ),
+          ],
           if (t.assignedTo != null) _buildProgressTracking(t),
           if (t.assignedTo != null) const SizedBox(height: 12),
           _buildCustomerCard(t),
@@ -480,6 +716,58 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
   }
 
   Widget _buildClaimBanner() {
+    if (_hasActiveTicket) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFEF2F2),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFFCA5A5)),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.red.shade100,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.block_outlined,
+                color: Colors.red.shade700,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Tiket Aktif Terdeteksi',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.red.shade900,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    'Anda sudah memiliki tiket aktif ($_activeTicketNumber). Selesaikan tiket tersebut terlebih dahulu sebelum mengambil tiket baru.',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -567,56 +855,57 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: AppColors.info.withOpacity(0.08),
+        color: const Color(0xFFF0FDF4),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.info.withOpacity(0.25)),
+        border: Border.all(color: const Color(0xFF86EFAC)),
       ),
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Tiket Siap Dikerjakan',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Mulai pekerjaan sekarang agar status tiket berpindah ke sedang dikerjakan.',
-            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-          ),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _isActing ? null : _startPsb,
-              icon: _isActing
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.play_arrow_rounded, size: 18),
-              label: const Text('Mulai Pekerjaan PSB'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.info,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.success.withOpacity(0.15),
+                  shape: BoxShape.circle,
                 ),
-                textStyle: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 14,
+                child: const Icon(
+                  Icons.play_circle_outline,
+                  size: 20,
+                  color: AppColors.success,
                 ),
               ),
-            ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Siap Memulai Pekerjaan?',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF14532D),
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Geser tombol di bawah untuk memulai GPS.',
+                      style: TextStyle(fontSize: 11, color: Color(0xFF166534)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SlideToStartButton(
+            label: 'Geser untuk Mulai Pekerjaan',
+            enabled: !_isStartingTracking,
+            loading: _isStartingTracking,
+            onConfirmed: _startPsbWithTracking,
           ),
         ],
       ),
@@ -1004,22 +1293,46 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
                   : 'Tiket ini sudah diselesaikan.',
               t.isClaimable ? AppColors.warning : AppColors.success,
             ),
-          if (canReport) ...[
-            _buildFieldReportForm(),
-            const SizedBox(height: 16),
-          ],
-          if (t.photos.isNotEmpty) ...[
-            const Text(
-              'Foto Dokumentasi',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary,
+          if (canReport) ...[_buildFieldReportForm()],
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBuktiFotoTab() {
+    final t = _ticket!;
+
+    return RefreshIndicator(
+      onRefresh: _fetchTicket,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (t.photos.isEmpty)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.only(top: 60),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.photo_library_outlined,
+                      size: 48,
+                      color: AppColors.textSecondary,
+                    ),
+                    SizedBox(height: 12),
+                    Text(
+                      'Belum ada foto dokumentasi.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
+            )
+          else
             ...t.photos.map(_buildPhotoCard),
-          ],
           const SizedBox(height: 24),
         ],
       ),
@@ -1077,33 +1390,8 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
               color: AppColors.textSecondary,
             ),
           ),
-          const SizedBox(height: 6),
-          DropdownButtonFormField<String>(
-            value: _selectedFieldStatus,
-            items: _fieldStatusOptions
-                .map(
-                  (opt) => DropdownMenuItem(
-                    value: opt.$1,
-                    child: Text(opt.$2, style: const TextStyle(fontSize: 13)),
-                  ),
-                )
-                .toList(),
-            onChanged: (v) => setState(() => _selectedFieldStatus = v!),
-            decoration: InputDecoration(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 10,
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: AppColors.divider),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: AppColors.divider),
-              ),
-            ),
-          ),
+          const SizedBox(height: 10),
+          _buildFieldStatusCards(),
           const SizedBox(height: 14),
           if (showFixedWarning) ...[
             Container(
@@ -1551,6 +1839,87 @@ class _TiketPsbDetailScreenState extends State<TiketPsbDetailScreen>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildFieldStatusCards() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: _fieldStatusOptions.map((option) {
+        final isSelected = _selectedFieldStatus == option.$1;
+        IconData icon;
+        Color color;
+
+        switch (option.$1) {
+          case 'preparing':
+            icon = Icons.content_paste_outlined;
+            color = const Color(0xFF9C27B0);
+            break;
+          case 'on_the_way':
+            icon = Icons.two_wheeler;
+            color = AppColors.info;
+            break;
+          case 'working':
+            icon = Icons.build_outlined;
+            color = const Color(0xFFFF9800);
+            break;
+          case 'done':
+            icon = Icons.check_circle_outlined;
+            color = AppColors.success;
+            break;
+          case 'waiting_parts':
+            icon = Icons.access_time_outlined;
+            color = AppColors.warning;
+            break;
+          case 'other':
+            icon = Icons.more_horiz_outlined;
+            color = AppColors.textSecondary;
+            break;
+          default:
+            icon = Icons.help_outline;
+            color = AppColors.textSecondary;
+        }
+
+        return InkWell(
+          onTap: () {
+            setState(() {
+              _selectedFieldStatus = option.$1;
+            });
+          },
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: isSelected ? color.withOpacity(0.12) : Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: isSelected ? color : Colors.grey.shade200,
+                width: isSelected ? 2 : 1,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 18,
+                  color: isSelected ? color : AppColors.textSecondary,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  option.$2,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                    color: isSelected ? color : AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 

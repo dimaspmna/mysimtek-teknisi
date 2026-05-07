@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../core/constants/app_colors.dart';
+import '../../../core/providers/gps_tracking_provider.dart';
 import 'beranda_screen.dart';
 import 'akun_screen.dart';
 
@@ -10,7 +12,8 @@ class TeknisiShell extends StatefulWidget {
   State<TeknisiShell> createState() => _TeknisiShellState();
 }
 
-class _TeknisiShellState extends State<TeknisiShell> {
+class _TeknisiShellState extends State<TeknisiShell>
+    with WidgetsBindingObserver {
   int _index = 0;
 
   final _screens = [BerandaScreen(), AkunScreen()];
@@ -18,7 +21,31 @@ class _TeknisiShellState extends State<TeknisiShell> {
   @override
   void initState() {
     super.initState();
-    // TODO: Initialize FCM and load initial data
+    WidgetsBinding.instance.addObserver(this);
+
+    // Restore GPS tracking state on app startup
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _restoreGpsState();
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Restore GPS tracking state when app resumes from background
+      _restoreGpsState();
+    }
+  }
+
+  Future<void> _restoreGpsState() async {
+    if (!mounted) return;
+    await context.read<GpsTrackingProvider>().restoreStateFromBackground();
   }
 
   @override

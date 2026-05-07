@@ -28,16 +28,11 @@ class _TiketPsbScreenState extends State<TiketPsbScreen>
   static const _statusFilters = [
     ('available', 'Tersedia'),
     ('active', 'Aktif'),
-    ('completed', 'Selesai'),
+    ('completed', 'Pemasangan Selesai'),
   ];
 
-  static const _finishedStatuses = {'completed', 'activated', 'closed'};
-  static const _inactiveStatuses = {
-    'completed',
-    'activated',
-    'closed',
-    'cancelled',
-  };
+  static const _finishedStatuses = {'done', 'closed'};
+  static const _inactiveStatuses = {'done', 'closed', 'cancelled'};
 
   TabController get _safeTabController {
     return _tabController ??= TabController(
