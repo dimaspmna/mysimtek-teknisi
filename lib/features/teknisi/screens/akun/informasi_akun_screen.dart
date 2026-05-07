@@ -1,8 +1,12 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import '../../../../core/constants/api_constants.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/providers/attendance_provider.dart';
 import '../../../../core/providers/auth_provider.dart';
+import '../../../../core/services/api_service.dart';
 
 class InformasiAkunScreen extends StatefulWidget {
   const InformasiAkunScreen({super.key});
@@ -12,6 +16,8 @@ class InformasiAkunScreen extends StatefulWidget {
 }
 
 class _InformasiAkunScreenState extends State<InformasiAkunScreen> {
+  bool _uploadingPhoto = false;
+
   @override
   void initState() {
     super.initState();
@@ -21,6 +27,126 @@ class _InformasiAkunScreenState extends State<InformasiAkunScreen> {
         context.read<AttendanceProvider>().fetchToday(email);
       }
     });
+  }
+
+  void _showPhotoOptions(bool hasPhoto) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: Text(hasPhoto ? 'Ganti Foto' : 'Pilih Foto'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndUploadPhoto();
+              },
+            ),
+            if (hasPhoto)
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.red),
+                title: const Text(
+                  'Hapus Foto',
+                  style: TextStyle(color: Colors.red),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _deletePhoto();
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndUploadPhoto() async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1024,
+      maxHeight: 1024,
+      imageQuality: 85,
+    );
+    if (picked == null || !mounted) return;
+
+    setState(() => _uploadingPhoto = true);
+    try {
+      final api = context.read<ApiService>();
+      final result = await api.postMultipart(
+        ApiConstants.teknisiProfilePhotoUpload,
+        {},
+        files: [File(picked.path)],
+        fileField: 'photo',
+      );
+      final photoPath = (result is Map)
+          ? (result['photo'] ?? result['data']?['photo'])?.toString()
+          : null;
+      if (photoPath != null && mounted) {
+        context.read<AuthProvider>().updateUserPhoto(photoPath);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Foto profil berhasil diperbarui.')),
+        );
+      }
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Gagal mengunggah foto.')));
+      }
+    } finally {
+      if (mounted) setState(() => _uploadingPhoto = false);
+    }
+  }
+
+  Future<void> _deletePhoto() async {
+    setState(() => _uploadingPhoto = true);
+    try {
+      final api = context.read<ApiService>();
+      await api.delete(ApiConstants.teknisiProfilePhotoDelete);
+      if (mounted) {
+        context.read<AuthProvider>().updateUserPhoto('');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Foto profil berhasil dihapus.')),
+        );
+      }
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Gagal menghapus foto.')));
+      }
+    } finally {
+      if (mounted) setState(() => _uploadingPhoto = false);
+    }
   }
 
   @override
@@ -51,17 +177,60 @@ class _InformasiAkunScreenState extends State<InformasiAkunScreen> {
             ),
             child: Column(
               children: [
-                Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.person,
-                    size: 40,
-                    color: AppColors.primary,
+                GestureDetector(
+                  onTap: _uploadingPhoto
+                      ? null
+                      : () => _showPhotoOptions(
+                          user?.photo != null && user!.photo!.isNotEmpty,
+                        ),
+                  child: Stack(
+                    children: [
+                      Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withOpacity(0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: _uploadingPhoto
+                            ? const CircularProgressIndicator()
+                            : (user?.photo != null && user!.photo!.isNotEmpty)
+                            ? ClipOval(
+                                child: Image.network(
+                                  '${ApiConstants.storageUrl}/storage/${user.photo}',
+                                  width: 80,
+                                  height: 80,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => const Icon(
+                                    Icons.person,
+                                    size: 40,
+                                    color: AppColors.primary,
+                                  ),
+                                ),
+                              )
+                            : const Icon(
+                                Icons.person,
+                                size: 40,
+                                color: AppColors.primary,
+                              ),
+                      ),
+                      Positioned(
+                        bottom: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: const BoxDecoration(
+                            color: AppColors.primary,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.camera_alt,
+                            size: 14,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 16),

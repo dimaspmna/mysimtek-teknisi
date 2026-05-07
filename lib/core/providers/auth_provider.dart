@@ -141,4 +141,11 @@ class AuthProvider extends ChangeNotifier {
       return 'Terjadi kesalahan: ${e.toString()}';
     }
   }
+
+  void updateUserPhoto(String photo) {
+    if (_user != null) {
+      _user = _user!.copyWith(photo: photo);
+      notifyListeners();
+    }
+  }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../../core/constants/api_constants.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_version.dart';
 import '../../../core/providers/attendance_provider.dart';
@@ -63,11 +64,25 @@ class _AkunScreenState extends State<AkunScreen> {
                       color: AppColors.primary.withOpacity(0.1),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(
-                      Icons.person,
-                      size: 28,
-                      color: AppColors.primary,
-                    ),
+                    child: (user?.photo != null && user!.photo!.isNotEmpty)
+                        ? ClipOval(
+                            child: Image.network(
+                              '${ApiConstants.storageUrl}/storage/${user.photo}',
+                              width: 50,
+                              height: 50,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => const Icon(
+                                Icons.person,
+                                size: 28,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          )
+                        : const Icon(
+                            Icons.person,
+                            size: 28,
+                            color: AppColors.primary,
+                          ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(

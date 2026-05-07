@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'core/constants/app_colors.dart';
 import 'core/constants/app_version.dart';
 import 'core/providers/auth_provider.dart';
@@ -61,6 +62,9 @@ class _SplashRouter extends StatefulWidget {
 
 class _SplashRouterState extends State<_SplashRouter> {
   bool _initialized = false;
+  bool _showSplash = false;
+
+  static const _splashShownKey = 'splash_shown';
 
   @override
   void initState() {
@@ -69,6 +73,14 @@ class _SplashRouterState extends State<_SplashRouter> {
   }
 
   Future<void> _init() async {
+    final prefs = await SharedPreferences.getInstance();
+    final splashShown = prefs.getBool(_splashShownKey) ?? false;
+
+    if (!splashShown) {
+      setState(() => _showSplash = true);
+      await prefs.setBool(_splashShownKey, true);
+    }
+
     await context.read<AuthProvider>().checkAuth();
     if (!mounted) return;
     setState(() => _initialized = true);
@@ -77,7 +89,8 @@ class _SplashRouterState extends State<_SplashRouter> {
   @override
   Widget build(BuildContext context) {
     if (!_initialized) {
-      return _buildSplash();
+      if (_showSplash) return _buildSplash();
+      return const SizedBox.shrink();
     }
 
     final auth = context.watch<AuthProvider>();

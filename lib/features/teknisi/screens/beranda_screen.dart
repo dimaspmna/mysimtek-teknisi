@@ -146,7 +146,7 @@ class _BerandaScreenState extends State<BerandaScreen> {
     _startPeriodicRefresh();
     unawaited(_fetchUnreadNotificationCount());
     _fetchTickets();
-    _fetchAttendance();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _fetchAttendance());
   }
 
   @override

@@ -16,6 +16,10 @@ class ApiConstants {
   static const String verifyPassword = '/verify-password';
   static const String changePassword = '/change-password';
 
+  // Teknisi profile
+  static const String teknisiProfilePhotoUpload = '/teknisi/profile/photo';
+  static const String teknisiProfilePhotoDelete = '/teknisi/profile/photo';
+
   // Teknisi endpoints
   static const String teknisiOdp = '/teknisi/odp';
   static const String teknisiJadwal = '/teknisi/jadwal';
