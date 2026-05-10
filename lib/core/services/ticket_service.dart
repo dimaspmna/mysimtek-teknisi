@@ -245,7 +245,9 @@ class TicketService {
     String? photoType,
     String? caption,
   }) async {
-    final mappedStatus = fieldStatus == 'fixed' ? 'completed' : 'in_progress';
+    final mappedStatus = (fieldStatus == 'done' || fieldStatus == 'fixed')
+        ? 'done'
+        : 'in_progress';
     final fields = {
       'field_status': fieldStatus,
       'field_notes': fieldNotes,

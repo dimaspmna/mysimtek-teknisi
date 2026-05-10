@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'debug_event_logger.dart';
 import 'gps_task_handler.dart';
 
 export 'gps_task_handler.dart' show gpsTaskCallback;
@@ -53,7 +54,7 @@ class LocationStreamingService {
         playSound: false,
       ),
       foregroundTaskOptions: ForegroundTaskOptions(
-        eventAction: ForegroundTaskEventAction.repeat(15000),
+        eventAction: ForegroundTaskEventAction.repeat(5000),
         autoRunOnBoot: false,
         autoRunOnMyPackageReplaced: false,
         allowWakeLock: true,
@@ -67,6 +68,11 @@ class LocationStreamingService {
     _isRunning = true;
     _retryCount = 0;
     _setStatus(TrackingStatus.pending);
+    DebugEventLogger.log(
+      'gps_service_start_requested',
+      scope: 'gps_service',
+      data: {'ticket_id': ticketId, 'endpoint': locationEndpoint ?? ''},
+    );
 
     // Store config in SharedPreferences so the task isolate can read it
     final prefs = await SharedPreferences.getInstance();
@@ -95,6 +101,15 @@ class LocationStreamingService {
       _isRunning = false;
       FlutterForegroundTask.removeTaskDataCallback(_onTaskData);
       _setStatus(TrackingStatus.error);
+      DebugEventLogger.log(
+        'gps_service_start_exception',
+        scope: 'gps_service',
+        data: {
+          'ticket_id': ticketId,
+          'endpoint': locationEndpoint ?? '',
+          'error': e.toString(),
+        },
+      );
       return;
     }
 
@@ -102,7 +117,27 @@ class LocationStreamingService {
       _isRunning = false;
       FlutterForegroundTask.removeTaskDataCallback(_onTaskData);
       _setStatus(TrackingStatus.error);
+      DebugEventLogger.log(
+        'gps_service_start_failed_result',
+        scope: 'gps_service',
+        data: {
+          'ticket_id': ticketId,
+          'endpoint': locationEndpoint ?? '',
+          'result': result.runtimeType.toString(),
+        },
+      );
+      return;
     }
+
+    DebugEventLogger.log(
+      'gps_service_start_success',
+      scope: 'gps_service',
+      data: {
+        'ticket_id': ticketId,
+        'endpoint': locationEndpoint ?? '',
+        'result': result.runtimeType.toString(),
+      },
+    );
   }
 
   void _onTaskData(Object data) {

@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/debug_event_logger.dart';
 import '../services/location_streaming_service.dart';
 
 /// Singleton provider that holds the active GPS tracking service.
@@ -17,6 +20,7 @@ class GpsTrackingProvider extends ChangeNotifier {
   DateTime? get lastPush => _lastPush;
   int get retryCount => _retryCount;
   int? get activeTicketId => _activeTicketId;
+  String? get activeEndpoint => _service?.locationEndpoint;
   bool get isRunning => _service != null && _service!.isRunning;
 
   /// Restore GPS tracking state from background service if still running.
@@ -98,15 +102,36 @@ class GpsTrackingProvider extends ChangeNotifier {
   }
 
   Future<void> startTracking(int ticketId, {String? endpoint}) async {
-    // If already tracking this ticket, do nothing
+    DebugEventLogger.log(
+      'gps_start_requested',
+      scope: 'gps_provider',
+      data: {'ticket_id': ticketId, 'endpoint': endpoint ?? ''},
+    );
+
+    // If already tracking this ticket + endpoint, do nothing.
+    // Endpoint is important to prevent PSB/TRB collisions when IDs overlap.
     if (_service != null &&
         _service!.isRunning &&
         _activeTicketId == ticketId) {
-      return;
+      final currentEndpoint = _service!.locationEndpoint ?? '';
+      final targetEndpoint = endpoint ?? '';
+      if (currentEndpoint == targetEndpoint) {
+        DebugEventLogger.log(
+          'gps_start_skipped_same_target',
+          scope: 'gps_provider',
+          data: {'ticket_id': ticketId, 'endpoint': targetEndpoint},
+        );
+        return;
+      }
     }
 
     // Stop any previous service first (different ticket or stale)
     if (_service != null) {
+      DebugEventLogger.log(
+        'gps_previous_service_stopped',
+        scope: 'gps_provider',
+        data: {'old_ticket_id': _activeTicketId},
+      );
       _service!.stop();
       _service = null;
     }
@@ -119,6 +144,17 @@ class GpsTrackingProvider extends ChangeNotifier {
         _status = status;
         _lastPush = lastPush;
         _retryCount = retryCount;
+        DebugEventLogger.log(
+          'gps_status_changed',
+          scope: 'gps_provider',
+          data: {
+            'ticket_id': ticketId,
+            'endpoint': endpoint ?? '',
+            'status': status.name,
+            'retry_count': retryCount,
+            'last_push': lastPush?.toIso8601String(),
+          },
+        );
         notifyListeners();
       },
     );
@@ -127,6 +163,110 @@ class GpsTrackingProvider extends ChangeNotifier {
     notifyListeners();
 
     await _service!.start();
+    DebugEventLogger.log(
+      'gps_start_invoked',
+      scope: 'gps_provider',
+      data: {
+        'ticket_id': ticketId,
+        'endpoint': endpoint ?? '',
+        'status': _status.name,
+      },
+    );
+  }
+
+  bool isTrackingHealthy(int ticketId, {String? endpoint}) {
+    if (!isRunning || _activeTicketId != ticketId) return false;
+
+    final expectedEndpoint = endpoint ?? '';
+    final currentEndpoint = _service?.locationEndpoint ?? '';
+    if (currentEndpoint != expectedEndpoint) return false;
+
+    return _status != TrackingStatus.error;
+  }
+
+  Future<bool> startTrackingSafely(
+    int ticketId, {
+    String? endpoint,
+    int retries = 1,
+    Duration settleDuration = const Duration(milliseconds: 1400),
+  }) async {
+    for (var attempt = 0; attempt <= retries; attempt++) {
+      DebugEventLogger.log(
+        'gps_start_attempt',
+        scope: 'gps_provider',
+        data: {
+          'ticket_id': ticketId,
+          'endpoint': endpoint ?? '',
+          'attempt': attempt + 1,
+          'max_attempts': retries + 1,
+        },
+      );
+
+      await startTracking(ticketId, endpoint: endpoint);
+
+      if (isTrackingHealthy(ticketId, endpoint: endpoint)) {
+        DebugEventLogger.log(
+          'gps_start_success',
+          scope: 'gps_provider',
+          data: {
+            'ticket_id': ticketId,
+            'endpoint': endpoint ?? '',
+            'attempt': attempt + 1,
+          },
+        );
+        return true;
+      }
+
+      final settleUntil = DateTime.now().add(settleDuration);
+      while (DateTime.now().isBefore(settleUntil)) {
+        if (isTrackingHealthy(ticketId, endpoint: endpoint)) {
+          return true;
+        }
+
+        if (_status == TrackingStatus.error) {
+          DebugEventLogger.log(
+            'gps_start_wait_break_error',
+            scope: 'gps_provider',
+            data: {
+              'ticket_id': ticketId,
+              'endpoint': endpoint ?? '',
+              'attempt': attempt + 1,
+              'retry_count': _retryCount,
+            },
+          );
+          break;
+        }
+
+        await Future.delayed(const Duration(milliseconds: 250));
+      }
+
+      if (attempt < retries) {
+        DebugEventLogger.log(
+          'gps_start_retry_scheduled',
+          scope: 'gps_provider',
+          data: {
+            'ticket_id': ticketId,
+            'endpoint': endpoint ?? '',
+            'next_attempt': attempt + 2,
+          },
+        );
+        stopTracking();
+        await Future.delayed(const Duration(milliseconds: 350));
+      }
+    }
+
+    final healthy = isTrackingHealthy(ticketId, endpoint: endpoint);
+    DebugEventLogger.log(
+      healthy ? 'gps_start_success_final' : 'gps_start_failed',
+      scope: 'gps_provider',
+      data: {
+        'ticket_id': ticketId,
+        'endpoint': endpoint ?? '',
+        'retry_count': _retryCount,
+        'status': _status.name,
+      },
+    );
+    return healthy;
   }
 
   void stopTracking() {

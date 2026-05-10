@@ -139,6 +139,7 @@ class _TiketPsbScreenState extends State<TiketPsbScreen>
         return AppColors.info;
       case 'completed':
       case 'activated':
+      case 'done':
       case 'closed':
         return AppColors.success;
       case 'cancelled':
@@ -154,6 +155,7 @@ class _TiketPsbScreenState extends State<TiketPsbScreen>
         return AppColors.info;
       case 'working':
         return const Color(0xFF9C27B0);
+      case 'done':
       case 'fixed':
         return AppColors.success;
       case 'waiting_parts':

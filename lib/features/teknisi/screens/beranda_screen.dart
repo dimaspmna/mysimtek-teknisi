@@ -120,6 +120,7 @@ class _BerandaScreenState extends State<BerandaScreen> {
         return AppColors.info;
       case 'completed':
       case 'activated':
+      case 'done':
       case 'closed':
         return AppColors.success;
       case 'cancelled':
@@ -657,6 +658,7 @@ class _BerandaScreenState extends State<BerandaScreen> {
     required VoidCallback onTap,
   }) {
     final details = <MapEntry<String, String>>[
+      MapEntry('Jenis Tiket', ticket.ticketTypeLabel ?? 'TRB Pelanggan'),
       MapEntry('Pelanggan', ticket.customerName ?? '-'),
       MapEntry('Status', ticket.statusLabel),
       MapEntry('Alamat', ticket.customerAddress ?? '-'),
@@ -910,7 +912,9 @@ class _BerandaScreenState extends State<BerandaScreen> {
       badgeColor: _getTrbStatusColor(ticket.status),
       ticketNumber: ticket.ticketNumber,
       title: ticket.subject,
-      subtitle: ticket.customerName ?? 'Pelanggan tidak tersedia',
+      subtitle: ticket.ticketType == 'general'
+          ? 'TRB Umum'
+          : (ticket.customerName ?? 'TRB Pelanggan'),
       description: ticket.customerAddress ?? ticket.description,
       statusLabel: ticket.statusLabel,
       label: label,

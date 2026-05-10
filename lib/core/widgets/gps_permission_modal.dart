@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:permission_handler/permission_handler.dart';
 import '../constants/app_colors.dart';
 
 /// Shows a modal that requests GPS permission and returns the initial
@@ -24,9 +23,35 @@ class _GpsPermissionSheet extends StatefulWidget {
   State<_GpsPermissionSheet> createState() => _GpsPermissionSheetState();
 }
 
-class _GpsPermissionSheetState extends State<_GpsPermissionSheet> {
+class _GpsPermissionSheetState extends State<_GpsPermissionSheet>
+    with WidgetsBindingObserver {
+  bool _resumeRetryPending = false;
   bool _loading = false;
   String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed ||
+        !_resumeRetryPending ||
+        _loading) {
+      return;
+    }
+
+    _resumeRetryPending = false;
+    Future.microtask(_requestGps);
+  }
 
   Future<void> _requestGps() async {
     setState(() {
@@ -43,21 +68,29 @@ class _GpsPermissionSheetState extends State<_GpsPermissionSheet> {
           _errorMessage =
               'Layanan lokasi (GPS) tidak aktif.\nAktifkan GPS di pengaturan perangkat.';
         });
+        _resumeRetryPending = true;
+        await Geolocator.openLocationSettings();
         return;
       }
 
       // 2. Request permission
-      final permission = await Permission.location.request();
-      if (permission.isPermanentlyDenied) {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.deniedForever) {
         setState(() {
           _loading = false;
           _errorMessage =
               'Izin lokasi ditolak permanen.\nBuka pengaturan aplikasi untuk mengaktifkan.';
         });
-        await openAppSettings();
+        _resumeRetryPending = true;
+        await Geolocator.openAppSettings();
         return;
       }
-      if (!permission.isGranted) {
+      if (permission != LocationPermission.always &&
+          permission != LocationPermission.whileInUse) {
         setState(() {
           _loading = false;
           _errorMessage = 'Izin lokasi ditolak. Diperlukan untuk monitoring.';
@@ -65,15 +98,31 @@ class _GpsPermissionSheetState extends State<_GpsPermissionSheet> {
         return;
       }
 
-      // 3. Get initial position
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.best,
-        ),
-      );
+      // 3. Get initial position with timeout to avoid endless loading.
+      Position? pos;
+      try {
+        pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 12),
+          ),
+        );
+      } catch (_) {
+        pos = await Geolocator.getLastKnownPosition();
+      }
 
-      if (mounted) Navigator.pop(context, pos);
+      if (pos == null) {
+        if (!mounted) return;
+        // Permission is already granted; allow caller to continue and let
+        // background tracking obtain the next available location fix.
+        Navigator.pop(context, null);
+        return;
+      }
+
+      if (!mounted) return;
+      Navigator.pop(context, pos);
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _loading = false;
         _errorMessage = 'Tidak bisa mengambil lokasi. Coba lagi.';

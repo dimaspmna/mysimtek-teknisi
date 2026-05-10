@@ -159,6 +159,8 @@ class Ticket {
   final String? priorityLabel;
   final String? source;
   final String? sourceLabel;
+  final String? ticketType;
+  final String? ticketTypeLabel;
   final String? odpName;
   final DateTime? technicianDispatchedAt;
   final DateTime? resolvedAt;
@@ -192,6 +194,8 @@ class Ticket {
     this.priorityLabel,
     this.source,
     this.sourceLabel,
+    this.ticketType,
+    this.ticketTypeLabel,
     this.odpName,
     this.technicianDispatchedAt,
     this.resolvedAt,
@@ -247,6 +251,12 @@ class Ticket {
       priorityLabel: json['priority_label'] as String?,
       source: json['source'] as String?,
       sourceLabel: json['source_label'] as String?,
+      ticketType: _toNullableString(json['ticket_type']),
+      ticketTypeLabel:
+          _toNullableString(json['ticket_type_label']) ??
+          ((_toNullableString(json['ticket_type']) ?? 'customer') == 'general'
+              ? 'TRB Umum'
+              : 'TRB Pelanggan'),
       odpName: json['odp']?['name'] as String?,
       technicianDispatchedAt: json['technician_dispatched_at'] != null
           ? DateTime.tryParse(json['technician_dispatched_at'] as String)

@@ -464,6 +464,30 @@ class _TiketTrbScreenState extends State<TiketTrbScreen>
                     ),
                   ),
                   const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color:
+                          (ticket.ticketType == 'general'
+                                  ? AppColors.info
+                                  : AppColors.success)
+                              .withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      ticket.ticketTypeLabel ?? 'TRB Pelanggan',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: ticket.ticketType == 'general'
+                            ? AppColors.info
+                            : AppColors.success,
+                      ),
+                    ),
+                  ),
                   if (isClaimable)
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -551,6 +575,23 @@ class _TiketTrbScreenState extends State<TiketTrbScreen>
                       child: Text(
                         ticket.customerName!,
                         style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ] else ...[
+                    const Icon(
+                      Icons.build_circle_outlined,
+                      size: 13,
+                      color: AppColors.textSecondary,
+                    ),
+                    const SizedBox(width: 4),
+                    const Expanded(
+                      child: Text(
+                        'Lokasi perbaikan umum',
+                        style: TextStyle(
                           fontSize: 12,
                           color: AppColors.textSecondary,
                         ),

@@ -11,11 +11,11 @@ import '../../../../core/providers/gps_tracking_provider.dart';
 import '../../../../core/constants/api_constants.dart';
 import '../../../../core/models/ticket_model.dart';
 import '../../../../core/services/api_service.dart';
+import '../../../../core/services/debug_event_logger.dart';
 import '../../../../core/services/storage_service.dart';
 import '../../../../core/services/ticket_service.dart';
 import '../../../../core/services/location_streaming_service.dart';
 import '../../../../core/widgets/gps_permission_modal.dart';
-import '../../../../core/widgets/slide_to_start_button.dart';
 import '../../../../core/widgets/tracking_status_card.dart';
 
 class TiketTrbDetailScreen extends StatefulWidget {
@@ -29,6 +29,9 @@ class TiketTrbDetailScreen extends StatefulWidget {
 
 class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
     with SingleTickerProviderStateMixin {
+  String get _trackingEndpoint =>
+      ApiConstants.teknisiTicketLocation(widget.ticketId);
+
   late TabController _tabController;
   late TicketService _ticketService;
 
@@ -47,12 +50,13 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
 
   // GPS Tracking
   bool _isStartingTracking = false;
+  double _startSliderValue = 0;
 
   final _scrollController = ScrollController();
 
   static const _fieldStatusOptions = [
     ('preparing', 'Sedang Persiapan'),
-    ('on_the_way', 'Menuju Lokasi'),
+    ('on_the_way', 'Menuju Lokasi Perbaikan'),
     ('working', 'Sedang Dikerjakan'),
     ('fixed', 'SELESAI'),
     ('waiting_parts', 'Menunggu Alat'),
@@ -174,7 +178,11 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
     if (!isActive) return;
 
     final gps = context.read<GpsTrackingProvider>();
-    if (gps.isRunning && gps.activeTicketId == widget.ticketId) return;
+    if (gps.isRunning &&
+        gps.activeTicketId == widget.ticketId &&
+        gps.activeEndpoint == _trackingEndpoint) {
+      return;
+    }
 
     // Only auto-start if permission is already granted — don't prompt silently
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -184,7 +192,24 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
         permission != LocationPermission.whileInUse)
       return;
 
-    await gps.startTracking(widget.ticketId);
+    await gps.startTrackingSafely(
+      widget.ticketId,
+      endpoint: _trackingEndpoint,
+      retries: 1,
+    );
+  }
+
+  Future<bool> _canUseGps({bool requestIfNeeded = false}) async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return false;
+
+    var permission = await Geolocator.checkPermission();
+    if (requestIfNeeded && permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    return permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse;
   }
 
   Future<void> _claimTicket() async {
@@ -209,49 +234,159 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
     if (_isStartingTracking) return;
     setState(() => _isStartingTracking = true);
 
+    DebugEventLogger.log(
+      'trb_ticket_start_requested',
+      scope: 'ticket_start',
+      data: {'ticket_id': widget.ticketId},
+    );
+
     // Ask for GPS permission and get initial position
     Position? initialPos;
     if (mounted) {
       initialPos = await showGpsPermissionModal(context);
     }
 
+    final canStartTracking = await _canUseGps(requestIfNeeded: true);
+    DebugEventLogger.log(
+      'trb_gps_permission_checked',
+      scope: 'ticket_start',
+      data: {
+        'ticket_id': widget.ticketId,
+        'can_start_tracking': canStartTracking,
+        'has_initial_pos': initialPos != null,
+      },
+    );
+
     try {
       final storage = StorageService();
       final api = ApiService(storage);
 
       // Build request body
-      final body = <String, dynamic>{'gps_enabled': initialPos != null};
+      final body = <String, dynamic>{'gps_enabled': canStartTracking};
       if (initialPos != null) {
         body['latitude'] = initialPos.latitude;
         body['longitude'] = initialPos.longitude;
         body['accuracy'] = initialPos.accuracy;
       }
 
-      // Call startTrb API (POST /teknisi/tickets/{id}/start)
-      final resp = await api.post(
-        ApiConstants.teknisiTicketStart(widget.ticketId),
-        body,
-      );
-      final updatedTicket = Ticket.fromJson(
-        (resp['data'] ?? resp) as Map<String, dynamic>,
-      );
-      setState(() {
-        _ticket = updatedTicket;
-        _isStartingTracking = false;
-      });
+      // Call startTrb API (POST /teknisi/tickets/{id}/start).
+      // Some backend versions reject enriched GPS payload before the ticket
+      // enters in-progress state, so fallback to standard start payload.
+      Ticket updatedTicket;
+      try {
+        final resp = await api.post(
+          ApiConstants.teknisiTicketStart(widget.ticketId),
+          body,
+        );
+        DebugEventLogger.log(
+          'trb_ticket_start_api_success',
+          scope: 'ticket_start',
+          data: {
+            'ticket_id': widget.ticketId,
+            'gps_enabled': canStartTracking,
+            'has_initial_pos': initialPos != null,
+            'mode': 'enriched',
+          },
+        );
+        updatedTicket = Ticket.fromJson(
+          (resp['data'] ?? resp) as Map<String, dynamic>,
+        );
+      } on ApiException catch (startErr) {
+        final message = startErr.toString().toLowerCase();
+        final shouldFallback =
+            canStartTracking &&
+            initialPos == null &&
+            message.contains('tidak dalam status sedang dikerjakan');
 
-      // Start GPS streaming if permission granted
-      if (initialPos != null && mounted) {
-        await context.read<GpsTrackingProvider>().startTracking(
-          widget.ticketId,
+        if (!shouldFallback) {
+          rethrow;
+        }
+
+        DebugEventLogger.log(
+          'trb_ticket_start_api_fallback_triggered',
+          scope: 'ticket_start',
+          data: {'ticket_id': widget.ticketId, 'reason': startErr.toString()},
+        );
+
+        updatedTicket = await _ticketService.startTrb(widget.ticketId);
+
+        DebugEventLogger.log(
+          'trb_ticket_start_api_fallback_success',
+          scope: 'ticket_start',
+          data: {'ticket_id': widget.ticketId, 'mode': 'standard'},
         );
       }
 
-      _showSnack('Pekerjaan dimulai!', isError: false);
-    } catch (e) {
-      setState(() => _isStartingTracking = false);
+      setState(() {
+        _ticket = updatedTicket;
+        _isStartingTracking = false;
+        _startSliderValue = 0;
+      });
+
+      var gpsRunning = false;
+
+      // Start GPS streaming even when initial fix is not available yet.
+      if (canStartTracking && mounted) {
+        final gps = context.read<GpsTrackingProvider>();
+        gpsRunning = await gps.startTrackingSafely(
+          widget.ticketId,
+          endpoint: _trackingEndpoint,
+          retries: 1,
+        );
+        DebugEventLogger.log(
+          'trb_gps_start_result',
+          scope: 'ticket_start',
+          data: {
+            'ticket_id': widget.ticketId,
+            'success': gpsRunning,
+            'gps_status': gps.status.name,
+            'retry_count': gps.retryCount,
+          },
+        );
+      }
+
+      final startMessage = !canStartTracking
+          ? 'Pekerjaan dimulai tanpa GPS. Aktifkan izin lokasi lalu tekan refresh GPS.'
+          : gpsRunning
+          ? (initialPos != null
+                ? 'Pekerjaan dimulai! GPS tracking aktif.'
+                : 'Pekerjaan dimulai! GPS aktif, menunggu titik lokasi awal.')
+          : 'Pekerjaan dimulai, tetapi tracking GPS belum aktif. Tekan refresh GPS.';
+
+      _showSnack(startMessage, isError: !canStartTracking);
+
+      // Make sure latest status is reflected after start.
+      _fetchTicket();
+    } catch (e, st) {
+      DebugEventLogger.log(
+        'trb_ticket_start_failed',
+        scope: 'ticket_start',
+        data: {
+          'ticket_id': widget.ticketId,
+          'error': e.toString(),
+          'stack': st.toString(),
+        },
+      );
+      setState(() {
+        _isStartingTracking = false;
+        _startSliderValue = 0;
+      });
       _showSnack(e.toString());
     }
+  }
+
+  void _onStartSliderChanged(double value) {
+    if (_isStartingTracking) return;
+    setState(() => _startSliderValue = value);
+  }
+
+  Future<void> _onStartSliderReleased(double value) async {
+    if (_isStartingTracking) return;
+    if (value >= 0.95) {
+      await _startTrbWithTracking();
+    }
+    if (!mounted) return;
+    setState(() => _startSliderValue = 0);
   }
 
   Future<void> _confirmClaimTicket() async {
@@ -293,14 +428,29 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
   /// Manual GPS refresh — requests permission via modal then (re)starts tracking.
   Future<void> _refreshGps() async {
     if (!mounted) return;
-    final pos = await showGpsPermissionModal(context);
-    if (pos == null) {
+    await showGpsPermissionModal(context);
+
+    final canStartTracking = await _canUseGps(requestIfNeeded: true);
+
+    if (!canStartTracking) {
       _showSnack('Izin lokasi diperlukan untuk tracking GPS.');
       return;
     }
+
     if (!mounted) return;
     final gps = context.read<GpsTrackingProvider>();
-    await gps.startTracking(widget.ticketId);
+    final gpsRunning = await gps.startTrackingSafely(
+      widget.ticketId,
+      endpoint: _trackingEndpoint,
+      retries: 2,
+    );
+
+    if (gpsRunning) {
+      _showSnack('GPS berhasil diaktifkan ulang.', isError: false);
+      return;
+    }
+
+    _showSnack('GPS belum aktif. Periksa izin lokasi dan baterai perangkat.');
   }
 
   Future<void> _submitFieldReport() async {
@@ -675,15 +825,13 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
             Consumer<GpsTrackingProvider>(
               builder: (_, gps, __) {
                 final isActive =
-                    gps.isRunning && gps.activeTicketId == widget.ticketId;
+                    gps.isRunning &&
+                    gps.activeTicketId == widget.ticketId &&
+                    gps.activeEndpoint == _trackingEndpoint;
                 return TrackingStatusCard(
                   status: isActive ? gps.status : TrackingStatus.idle,
-                  lastPush: gps.activeTicketId == widget.ticketId
-                      ? gps.lastPush
-                      : null,
-                  retryCount: gps.activeTicketId == widget.ticketId
-                      ? gps.retryCount
-                      : 0,
+                  lastPush: isActive ? gps.lastPush : null,
+                  retryCount: isActive ? gps.retryCount : 0,
                   onRestart: _refreshGps,
                 );
               },
@@ -900,11 +1048,99 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
             ],
           ),
           const SizedBox(height: 12),
-          SlideToStartButton(
-            label: 'Geser untuk Mulai Pekerjaan',
-            enabled: !_isStartingTracking,
-            loading: _isStartingTracking,
-            onConfirmed: _startTrbWithTracking,
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFBBF7D0)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _isStartingTracking
+                      ? 'Memulai pekerjaan...'
+                      : 'Geser tombol ke kanan untuk mulai',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF166534),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 56,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      const handleWidth = 68.0;
+                      const handleHeight = 44.0;
+                      final maxLeft = (constraints.maxWidth - handleWidth)
+                          .clamp(0.0, double.infinity);
+                      final handleLeft = maxLeft * _startSliderValue;
+
+                      return Stack(
+                        children: [
+                          Positioned.fill(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE2E8F0),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              alignment: Alignment.center,
+                              child: const Text(
+                                'Geser untuk mulai',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF64748B),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            top: (56 - handleHeight) / 2,
+                            left: handleLeft,
+                            child: GestureDetector(
+                              onHorizontalDragUpdate: _isStartingTracking
+                                  ? null
+                                  : (details) {
+                                      if (maxLeft <= 0) return;
+                                      final nextValue =
+                                          (_startSliderValue +
+                                                  (details.delta.dx / maxLeft))
+                                              .clamp(0.0, 1.0);
+                                      _onStartSliderChanged(nextValue);
+                                    },
+                              onHorizontalDragEnd: _isStartingTracking
+                                  ? null
+                                  : (_) => _onStartSliderReleased(
+                                      _startSliderValue,
+                                    ),
+                              child: Container(
+                                width: handleWidth,
+                                height: handleHeight,
+                                decoration: BoxDecoration(
+                                  color: AppColors.success,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                alignment: Alignment.center,
+                                child: const Icon(
+                                  Icons.arrow_forward,
+                                  color: Colors.white,
+                                  size: 22,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -942,7 +1178,7 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        t.customerName ?? '-',
+                        t.customerName ?? (t.ticketTypeLabel ?? 'TRB Umum'),
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w700,
@@ -985,6 +1221,29 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
                   ),
                 ],
               ),
+            )
+          else
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.build_outlined,
+                    size: 16,
+                    color: AppColors.textSecondary,
+                  ),
+                  SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Tiket TRB umum tanpa alamat pelanggan spesifik.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           if (hasCoordinate)
             Padding(
@@ -996,7 +1255,7 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
                     _openInGoogleMaps(
                       lat: t.customerLat!,
                       lng: t.customerLng!,
-                      label: t.customerName ?? 'Lokasi Pelanggan',
+                      label: t.customerName ?? 'Lokasi Perbaikan',
                     );
                   },
                   icon: const Icon(Icons.map_outlined, size: 18),
@@ -1047,6 +1306,14 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
           if (t.categoryLabel != null) ...[
             const Divider(height: 16),
             _statusRow('Kategori', t.categoryLabel!, AppColors.info),
+          ],
+          if (t.ticketTypeLabel != null) ...[
+            const Divider(height: 16),
+            _statusRow(
+              'Jenis Tiket',
+              t.ticketTypeLabel!,
+              t.ticketType == 'general' ? AppColors.info : AppColors.success,
+            ),
           ],
           if (t.assignerName != null) ...[
             const Divider(height: 16),
@@ -1768,7 +2035,7 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
         done: currentFieldStep != null && currentFieldStep >= 1,
       ),
       (
-        label: 'Menuju Lokasi',
+        label: 'Menuju Lokasi Perbaikan',
         done: currentFieldStep != null && currentFieldStep >= 2,
       ),
       (
