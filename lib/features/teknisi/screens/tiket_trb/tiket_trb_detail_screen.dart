@@ -41,6 +41,11 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
   String? _errorMessage;
   bool _hasActiveTicket = false;
   String? _activeTicketNumber;
+  List<TechnicianAssignment> _technicianOptions = const [];
+  Set<int> _selectedSupportIds = <int>{};
+  bool _isLoadingTechnicianOptions = false;
+  bool _isSavingSupportMembers = false;
+  bool _showSupportMembersForm = false;
 
   // Field report form
   String _selectedFieldStatus = 'working';
@@ -97,17 +102,49 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
     try {
       final ticket = await _ticketService.getTrbTicketDetail(widget.ticketId);
       await _checkActiveTickets();
+      _syncSupportSelectionFromTicket(ticket);
       setState(() {
         _ticket = ticket;
         _isLoading = false;
         _selectedFieldStatus = _normalizeFieldStatus(ticket.fieldStatus);
       });
+      if (ticket.isPic) {
+        await _loadTechnicianOptions(ticket: ticket);
+      }
       _ensureGpsRunning(ticket);
     } catch (e) {
       setState(() {
         _errorMessage = e.toString();
         _isLoading = false;
       });
+    }
+  }
+
+  void _syncSupportSelectionFromTicket(Ticket ticket) {
+    _selectedSupportIds = ticket.supportTechnicians.map((m) => m.id).toSet();
+  }
+
+  Future<void> _loadTechnicianOptions({Ticket? ticket}) async {
+    if (_isLoadingTechnicianOptions) return;
+    final targetTicket = ticket ?? _ticket;
+    if (targetTicket == null || !targetTicket.isPic) return;
+
+    setState(() => _isLoadingTechnicianOptions = true);
+    try {
+      final technicians = await _ticketService.getTechnicianOptions();
+      if (!mounted) return;
+
+      final filtered = technicians
+          .where((tech) => tech.id != (targetTicket.assignedTo ?? -1))
+          .toList();
+
+      setState(() {
+        _technicianOptions = filtered;
+        _isLoadingTechnicianOptions = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isLoadingTechnicianOptions = false);
     }
   }
 
@@ -171,7 +208,7 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
   /// Auto-start GPS tracking if ticket is in_progress, permission granted, and not already tracking.
   Future<void> _ensureGpsRunning(Ticket ticket) async {
     final isActive =
-        ticket.assignedTo != null &&
+        ticket.isPic &&
         ticket.fieldStatus != null &&
         ticket.fieldStatus != 'pending' &&
         ticket.fieldStatus != 'fixed';
@@ -230,7 +267,83 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
     }
   }
 
+  Future<void> _joinTicket() async {
+    setState(() => _isActing = true);
+    try {
+      final updated = await _ticketService.joinTrbTicket(widget.ticketId);
+      setState(() {
+        _ticket = updated;
+        _isActing = false;
+      });
+      _showSnack('Berhasil bergabung sebagai teknisi anggota.', isError: false);
+      _fetchTicket();
+    } catch (e) {
+      setState(() => _isActing = false);
+      _showSnack(e.toString());
+    }
+  }
+
+  Future<void> _saveSupportMembers() async {
+    final ticket = _ticket;
+    if (ticket == null || !ticket.isPic || _isSavingSupportMembers) return;
+
+    setState(() => _isSavingSupportMembers = true);
+    try {
+      final selected = _selectedSupportIds.toList()..sort();
+      final updated = await _ticketService.updateTrbSupportMembers(
+        ticketId: widget.ticketId,
+        supportTechnicianIds: selected,
+      );
+
+      if (!mounted) return;
+      _syncSupportSelectionFromTicket(updated);
+      setState(() {
+        _ticket = updated;
+        _isSavingSupportMembers = false;
+      });
+      _showSnack('Daftar teknisi anggota berhasil diperbarui.', isError: false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSavingSupportMembers = false);
+      _showSnack(e.toString());
+    }
+  }
+
+  Future<void> _confirmJoinTicket() async {
+    if (_isActing) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Join Tiket'),
+        content: const Text(
+          'Gabung sebagai teknisi anggota? Anda hanya bisa memantau dan berdiskusi, update progres tetap oleh teknisi penanggungjawab.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Batal'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Gabung'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _joinTicket();
+    }
+  }
+
   Future<void> _startTrbWithTracking() async {
+    if (!(_ticket?.isPic ?? false)) {
+      _showSnack(
+        'Mulai pekerjaan dengan GPS hanya untuk teknisi penanggungjawab.',
+      );
+      return;
+    }
+
     if (_isStartingTracking) return;
     setState(() => _isStartingTracking = true);
 
@@ -427,6 +540,11 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
 
   /// Manual GPS refresh — requests permission via modal then (re)starts tracking.
   Future<void> _refreshGps() async {
+    if (!(_ticket?.isPic ?? false)) {
+      _showSnack('GPS tracking hanya tersedia untuk teknisi penanggungjawab.');
+      return;
+    }
+
     if (!mounted) return;
     await showGpsPermissionModal(context);
 
@@ -811,13 +929,14 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
         children: [
           // Claim banner
           if (t.isClaimable) _buildClaimBanner(),
-          // Mulai Pekerjaan (start button for assigned tickets not yet started)
+          if (t.canJoin) _buildJoinBanner(),
+          // Mulai Pekerjaan (start button hanya untuk PIC)
           if (!t.isClaimable &&
-              t.assignedTo != null &&
+              t.isPic &&
               (t.fieldStatus == null || t.fieldStatus == 'pending'))
             _buildStartJobBanner(),
           // GPS Tracking status card
-          if (t.assignedTo != null &&
+          if (t.isPic &&
               t.fieldStatus != null &&
               t.fieldStatus != 'pending' &&
               t.fieldStatus != 'fixed') ...[
@@ -838,10 +957,17 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
             ),
           ],
           // Progress tracking
-          if (t.assignedTo != null) _buildProgressTracking(t),
-          if (t.assignedTo != null) const SizedBox(height: 12),
+          if (t.isPic) _buildProgressTracking(t),
+          if (t.isPic) const SizedBox(height: 12),
           // Customer card
           _buildCustomerCard(t),
+          const SizedBox(height: 12),
+          // Team members roster
+          _buildTeamMembersCard(t),
+          if (t.isPic) const SizedBox(height: 12),
+          if (t.isPic) _buildSupportMembersEditorCard(t),
+          if (t.isSupport) const SizedBox(height: 12),
+          if (t.isSupport) _buildPicTechnicianInfoCard(t),
           const SizedBox(height: 12),
           // Status row
           _buildStatusCard(t),
@@ -857,6 +983,55 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
           // Timeline
           _buildTimelineCard(t),
           const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPicTechnicianInfoCard(Ticket t) {
+    final picName = t.picTechnician?.name ?? 'Belum ditetapkan';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF6FF),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFBFDBFE)),
+      ),
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.badge_outlined, size: 18, color: Color(0xFF1D4ED8)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Teknisi Penanggungjawab',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF1E3A8A),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  picName,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF1D4ED8),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  'Akun anggota tidak mengaktifkan GPS tracking.',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF1D4ED8)),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -990,6 +1165,54 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
                   fontWeight: FontWeight.w700,
                   fontSize: 14,
                 ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildJoinBanner() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF6FF),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF93C5FD)),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Tiket Sudah Ada Penanggungjawab',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF1E3A8A),
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Anda bisa bergabung sebagai teknisi anggota untuk support. Hak update progres, GPS, dan laporan tetap di teknisi penanggungjawab.',
+            style: TextStyle(fontSize: 11, color: Color(0xFF1D4ED8)),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _isActing ? null : _confirmJoinTicket,
+              icon: const Icon(Icons.group_add_outlined, size: 18),
+              label: const Text('Gabung Tiket'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.info,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                textStyle: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
           ),
@@ -1276,6 +1499,365 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
     );
   }
 
+  Widget _buildTeamMembersCard(Ticket t) {
+    final hasPic = t.picTechnician != null;
+    final hasSupport = t.supportTechnicians.isNotEmpty;
+
+    if (!hasPic && !hasSupport) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: const BoxDecoration(
+              color: AppColors.primary,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.group, color: Colors.white, size: 20),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Tim Teknisi',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // PIC Member
+                if (hasPic) ...[
+                  const Text(
+                    'Penanggungjawab',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: AppColors.primary.withOpacity(0.2),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.person_outline,
+                          size: 16,
+                          color: AppColors.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            t.picTechnician!.name,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'PIC',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (hasSupport) const SizedBox(height: 14),
+                ],
+                // Support Members
+                if (hasSupport) ...[
+                  const Text(
+                    'Anggota Tim',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Column(
+                    children: t.supportTechnicians.asMap().entries.map((entry) {
+                      final isLast =
+                          entry.key == t.supportTechnicians.length - 1;
+                      return Column(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.withOpacity(0.05),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: Colors.grey.withOpacity(0.2),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.person_outline,
+                                  size: 16,
+                                  color: AppColors.textSecondary,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    entry.value.name,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade300,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Text(
+                                    'Anggota',
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (!isLast) const SizedBox(height: 8),
+                        ],
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSupportMembersEditorCard(Ticket t) {
+    final currentSupportIds = t.supportTechnicians.map((m) => m.id).toSet();
+    final hasChanges =
+        currentSupportIds.length != _selectedSupportIds.length ||
+        !currentSupportIds.containsAll(_selectedSupportIds);
+    final selectedCount = _selectedSupportIds.length;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Kelola Teknisi Anggota',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Pilih anggota tim yang membantu tiket ini. Boleh dikosongkan jika tidak ada anggota.',
+            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  selectedCount == 0
+                      ? 'Belum ada anggota dipilih.'
+                      : '$selectedCount anggota dipilih',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+              ElevatedButton.icon(
+                onPressed: () {
+                  setState(
+                    () => _showSupportMembersForm = !_showSupportMembersForm,
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2563EB),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+                icon: Icon(
+                  _showSupportMembersForm
+                      ? Icons.expand_less
+                      : Icons.expand_more,
+                  size: 18,
+                  color: Colors.white,
+                ),
+                label: Text(
+                  _showSupportMembersForm ? 'Tutup' : 'Tambah Tim',
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+          if (_showSupportMembersForm) ...[
+            const SizedBox(height: 12),
+            if (_isLoadingTechnicianOptions)
+              const Center(
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            else if (_technicianOptions.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.background,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.divider),
+                ),
+                child: const Text(
+                  'Tidak ada teknisi lain yang tersedia untuk dipilih.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              )
+            else
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _technicianOptions.map((tech) {
+                  final isSelected = _selectedSupportIds.contains(tech.id);
+                  return FilterChip(
+                    label: Text(tech.name),
+                    selected: isSelected,
+                    onSelected: _isSavingSupportMembers
+                        ? null
+                        : (selected) {
+                            setState(() {
+                              if (selected) {
+                                _selectedSupportIds.add(tech.id);
+                              } else {
+                                _selectedSupportIds.remove(tech.id);
+                              }
+                            });
+                          },
+                  );
+                }).toList(),
+              ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isSavingSupportMembers || !hasChanges
+                    ? null
+                    : _saveSupportMembers,
+                icon: _isSavingSupportMembers
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.save_outlined, size: 18),
+                label: Text(
+                  _isSavingSupportMembers
+                      ? 'Menyimpan...'
+                      : 'Simpan Anggota Tim',
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  textStyle: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildStatusCard(Ticket t) {
     return Container(
       decoration: BoxDecoration(
@@ -1317,7 +1899,7 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
           ],
           if (t.assignerName != null) ...[
             const Divider(height: 16),
-            _infoRow('Ditugaskan oleh', t.assignerName!),
+            _infoRow('Ditugaskan ke', t.assignerName!),
           ],
           if (t.odpName != null) ...[
             const Divider(height: 16),
@@ -1553,7 +2135,7 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
   Widget _buildLaporanTab() {
     final t = _ticket!;
     final canReport =
-        t.assignedTo != null &&
+        t.isPic &&
         t.status != 'done' &&
         t.status != 'resolved' &&
         t.status != 'closed';
@@ -1568,7 +2150,9 @@ class _TiketTrbDetailScreenState extends State<TiketTrbDetailScreen>
             _buildInfoBanner(
               t.isClaimable
                   ? 'Ambil tiket terlebih dahulu di tab Info untuk bisa mengirim laporan.'
-                  : 'Tiket ini sudah diselesaikan.',
+                  : (t.isSupport
+                        ? 'Anda tergabung sebagai anggota. Laporan hanya bisa dikirim oleh teknisi penanggungjawab.'
+                        : 'Tiket ini sudah diselesaikan.'),
               t.isClaimable ? AppColors.warning : AppColors.success,
             ),
 

@@ -11,7 +11,7 @@ import 'tiket_psb_detail_screen.dart';
 class TiketPsbScreen extends StatefulWidget {
   final int initialIndex;
 
-  const TiketPsbScreen({super.key, this.initialIndex = 0});
+  const TiketPsbScreen({super.key, this.initialIndex = 1});
 
   @override
   State<TiketPsbScreen> createState() => _TiketPsbScreenState();
@@ -50,7 +50,13 @@ class _TiketPsbScreenState extends State<TiketPsbScreen>
   }
 
   bool _isActiveTicket(PsbTicket ticket, int? userId) {
-    if (userId == null || ticket.assignedTo != userId) return false;
+    if (userId == null) return false;
+    final isOwnAssignment = ticket.assignedTo == userId;
+    final isSupportMember = ticket.supportTechnicians.any(
+      (m) => m.id == userId,
+    );
+    final isJoinedByMember = ticket.isJoined || isSupportMember;
+    if (!isOwnAssignment && !isJoinedByMember) return false;
     return !_inactiveStatuses.contains(ticket.status.toLowerCase());
   }
 
@@ -61,12 +67,17 @@ class _TiketPsbScreenState extends State<TiketPsbScreen>
             .where((ticket) => _isActiveTicket(ticket, userId))
             .toList();
       case 'available':
-        return _tickets.where((ticket) => ticket.isClaimable).toList();
+        return _tickets
+            .where((ticket) => ticket.isClaimable || ticket.canJoin)
+            .toList();
       case 'completed':
         return _tickets
             .where(
               (ticket) =>
-                  ticket.assignedTo == userId && _isFinishedTicket(ticket),
+                  (ticket.assignedTo == userId ||
+                      ticket.isJoined ||
+                      ticket.supportTechnicians.any((m) => m.id == userId)) &&
+                  _isFinishedTicket(ticket),
             )
             .toList();
       default:
@@ -420,6 +431,7 @@ class _TiketPsbScreenState extends State<TiketPsbScreen>
     final statusColor = _getStatusColor(ticket.status);
     final isResolved = _isFinishedTicket(ticket);
     final isClaimable = ticket.isClaimable;
+    final isJoinable = ticket.canJoin;
 
     return GestureDetector(
       onTap: () async {
@@ -471,22 +483,25 @@ class _TiketPsbScreenState extends State<TiketPsbScreen>
                     ),
                   ),
                   const SizedBox(width: 6),
-                  if (isClaimable)
+                  if (isClaimable || isJoinable)
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
                         vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: AppColors.success.withOpacity(0.12),
+                        color: (isJoinable ? AppColors.info : AppColors.success)
+                            .withOpacity(0.12),
                         borderRadius: BorderRadius.circular(6),
                       ),
-                      child: const Text(
-                        'TERSEDIA',
+                      child: Text(
+                        isJoinable ? 'BISA JOIN' : 'TERSEDIA',
                         style: TextStyle(
                           fontSize: 9,
                           fontWeight: FontWeight.w800,
-                          color: AppColors.success,
+                          color: isJoinable
+                              ? AppColors.info
+                              : AppColors.success,
                         ),
                       ),
                     ),
@@ -598,6 +613,15 @@ class _TiketPsbScreenState extends State<TiketPsbScreen>
                   style: TextStyle(
                     fontSize: 11,
                     color: AppColors.warning,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              if (isJoinable)
+                const Text(
+                  'Klik untuk melihat detail dan join tiket ini',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.info,
                     fontWeight: FontWeight.w500,
                   ),
                 ),

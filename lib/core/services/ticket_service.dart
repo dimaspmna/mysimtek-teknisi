@@ -15,6 +15,27 @@ class TicketService {
     return null;
   }
 
+  Future<List<TechnicianAssignment>> getTechnicianOptions() async {
+    final response = await _api.get('/teknisi/technicians/options');
+
+    List<dynamic> raw;
+    if (response is List) {
+      raw = response;
+    } else if (response is Map<String, dynamic> &&
+        response['status'] == 'success') {
+      raw = (response['data'] as List?) ?? const [];
+    } else {
+      throw ApiException(
+        response['message'] ?? 'Gagal mengambil daftar teknisi',
+      );
+    }
+
+    return raw
+        .whereType<Map<String, dynamic>>()
+        .map(TechnicianAssignment.fromJson)
+        .toList();
+  }
+
   // ─── TRB Tickets ─────────────────────────────────────────────────────────
 
   Future<List<Ticket>> getTrbTickets({String? status, String? search}) async {
@@ -75,6 +96,27 @@ class TicketService {
     throw ApiException('Gagal mengambil tiket');
   }
 
+  Future<Ticket> joinTrbTicket(int ticketId) async {
+    final response = await _api.post('/teknisi/tickets/$ticketId/join', {});
+    if (response is Map<String, dynamic>) {
+      if (response.containsKey('ticket_number')) {
+        return Ticket.fromJson(response);
+      }
+      if (response['status'] == 'success') {
+        final payload =
+            _asMap(response['data']) ??
+            _asMap(response['ticket']) ??
+            _asMap(response['result']);
+        if (payload != null && payload.containsKey('ticket_number')) {
+          return Ticket.fromJson(payload);
+        }
+        return getTrbTicketDetail(ticketId);
+      }
+      throw ApiException(response['message'] ?? 'Gagal join tiket');
+    }
+    throw ApiException('Gagal join tiket');
+  }
+
   Future<Ticket> startTrb(int ticketId) async {
     final response = await _api.post('/teknisi/tickets/$ticketId/start', {});
     if (response is Map<String, dynamic>) {
@@ -93,6 +135,17 @@ class TicketService {
       throw ApiException(response['message'] ?? 'Gagal memulai TRB');
     }
     throw ApiException('Gagal memulai TRB');
+  }
+
+  Future<Ticket> updateTrbSupportMembers({
+    required int ticketId,
+    required List<int> supportTechnicianIds,
+  }) async {
+    await _api.post('/teknisi/tickets/$ticketId/support-members', {
+      'support_teknisi_ids': supportTechnicianIds,
+    });
+
+    return getTrbTicketDetail(ticketId);
   }
 
   Future<void> sendTrbFieldReport({
@@ -213,6 +266,27 @@ class TicketService {
     throw ApiException('Gagal mengambil tiket');
   }
 
+  Future<PsbTicket> joinPsbTicket(int ticketId) async {
+    final response = await _api.post('/teknisi/psb-tickets/$ticketId/join', {});
+    if (response is Map<String, dynamic>) {
+      if (response.containsKey('ticket_number')) {
+        return PsbTicket.fromJson(response);
+      }
+      if (response['status'] == 'success') {
+        final payload =
+            _asMap(response['data']) ??
+            _asMap(response['psb_ticket']) ??
+            _asMap(response['result']);
+        if (payload != null && payload.containsKey('ticket_number')) {
+          return PsbTicket.fromJson(payload);
+        }
+        return getPsbTicketDetail(ticketId);
+      }
+      throw ApiException(response['message'] ?? 'Gagal join tiket PSB');
+    }
+    throw ApiException('Gagal join tiket PSB');
+  }
+
   Future<PsbTicket> startPsb(int ticketId) async {
     final response = await _api.post(
       '/teknisi/psb-tickets/$ticketId/start',
@@ -235,6 +309,17 @@ class TicketService {
       throw ApiException(response['message'] ?? 'Gagal memulai PSB');
     }
     throw ApiException('Gagal memulai PSB');
+  }
+
+  Future<PsbTicket> updatePsbSupportMembers({
+    required int ticketId,
+    required List<int> supportTechnicianIds,
+  }) async {
+    await _api.post('/teknisi/psb-tickets/$ticketId/support-members', {
+      'support_teknisi_ids': supportTechnicianIds,
+    });
+
+    return getPsbTicketDetail(ticketId);
   }
 
   Future<void> sendPsbFieldReport({

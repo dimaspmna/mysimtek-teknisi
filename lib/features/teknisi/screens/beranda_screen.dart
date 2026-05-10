@@ -50,9 +50,27 @@ class _BerandaScreenState extends State<BerandaScreen> {
   };
 
   bool _isTrbActiveForUser(Ticket ticket, int? userId) {
-    if (userId == null || ticket.assignedTo != userId) return false;
+    if (userId == null) return false;
+    final isOwnAssignment = ticket.assignedTo == userId;
+    final isSupportMember = ticket.supportTechnicians.any(
+      (m) => m.id == userId,
+    );
+    final isJoinedByMember = ticket.isJoined || isSupportMember;
+    if (!isOwnAssignment && !isJoinedByMember) return false;
     final status = ticket.status.toLowerCase();
     return !_inactiveStatuses.contains(status);
+  }
+
+  bool _isPsbActiveForUser(PsbTicket ticket, int? userId) {
+    if (userId == null) return false;
+    final isOwnAssignment = ticket.assignedTo == userId;
+    final isSupportMember = ticket.supportTechnicians.any(
+      (m) => m.id == userId,
+    );
+    final isJoinedByMember = ticket.isJoined || isSupportMember;
+    if (!isOwnAssignment && !isJoinedByMember) return false;
+    return !_isPsbFinished(ticket) &&
+        !_inactiveStatuses.contains(ticket.status.toLowerCase());
   }
 
   bool _isPsbFinished(PsbTicket ticket) {
@@ -70,11 +88,22 @@ class _BerandaScreenState extends State<BerandaScreen> {
   int _getCompletedTakenCount(int? userId) {
     final trbCompleted = _trbTickets.where((ticket) {
       final status = ticket.status.toLowerCase();
-      return ticket.assignedTo == userId && _completedStatuses.contains(status);
+      final isOwnAssignment = ticket.assignedTo == userId;
+      final isSupportMember = ticket.supportTechnicians.any(
+        (m) => m.id == userId,
+      );
+      final isJoinedByMember = ticket.isJoined || isSupportMember;
+      return (isOwnAssignment || isJoinedByMember) &&
+          _completedStatuses.contains(status);
     }).length;
 
     final psbCompleted = _psbTickets.where((ticket) {
-      return ticket.assignedTo == userId && _isPsbFinished(ticket);
+      final isOwnAssignment = ticket.assignedTo == userId;
+      final isSupportMember = ticket.supportTechnicians.any(
+        (m) => m.id == userId,
+      );
+      final isJoinedByMember = ticket.isJoined || isSupportMember;
+      return (isOwnAssignment || isJoinedByMember) && _isPsbFinished(ticket);
     }).length;
 
     return trbCompleted + psbCompleted;
@@ -243,9 +272,7 @@ class _BerandaScreenState extends State<BerandaScreen> {
         .where((ticket) => _isTrbActiveForUser(ticket, userId))
         .toList();
     final activePsbTickets = _psbTickets
-        .where(
-          (ticket) => ticket.assignedTo == userId && !_isPsbFinished(ticket),
-        )
+        .where((ticket) => _isPsbActiveForUser(ticket, userId))
         .toList();
     final availableTrbTickets = _trbTickets
         .where((ticket) => ticket.isClaimable)

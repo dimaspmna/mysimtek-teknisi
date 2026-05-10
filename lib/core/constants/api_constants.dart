@@ -26,6 +26,7 @@ class ApiConstants {
   static const String teknisiTickets = '/teknisi/tickets';
   static String teknisiTicketDetail(dynamic id) => '/teknisi/tickets/$id';
   static String teknisiTicketClaim(dynamic id) => '/teknisi/tickets/$id/claim';
+  static String teknisiTicketJoin(dynamic id) => '/teknisi/tickets/$id/join';
   static String teknisiTicketStart(dynamic id) => '/teknisi/tickets/$id/start';
   static String teknisiTicketLocation(dynamic id) =>
       '/teknisi/tickets/$id/location';
@@ -40,6 +41,8 @@ class ApiConstants {
       '/teknisi/psb-tickets/$id';
   static String teknisiPsbTicketClaim(dynamic id) =>
       '/teknisi/psb-tickets/$id/claim';
+  static String teknisiPsbTicketJoin(dynamic id) =>
+      '/teknisi/psb-tickets/$id/join';
   static String teknisiPsbTicketStart(dynamic id) =>
       '/teknisi/psb-tickets/$id/start';
   static String teknisiPsbTicketLocation(dynamic id) =>

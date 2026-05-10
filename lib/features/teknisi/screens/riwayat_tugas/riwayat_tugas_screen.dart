@@ -44,18 +44,26 @@ class _RiwayatTugasScreenState extends State<RiwayatTugasScreen> {
 
   List<Ticket> _trbCompletedByUser(List<Ticket> tickets, int? userId) {
     if (userId == null) return [];
-    return tickets
-        .where(
-          (ticket) => ticket.assignedTo == userId && _isTrbFinished(ticket),
-        )
-        .toList();
+    return tickets.where((ticket) {
+      final isOwnAssignment = ticket.assignedTo == userId;
+      final isSupportMember = ticket.supportTechnicians.any(
+        (member) => member.id == userId,
+      );
+      final isJoinedByMember = ticket.isJoined || isSupportMember;
+      return (isOwnAssignment || isJoinedByMember) && _isTrbFinished(ticket);
+    }).toList();
   }
 
   List<PsbTicket> _psbCompletedByUser(List<PsbTicket> tickets, int? userId) {
     if (userId == null) return [];
-    return tickets
-        .where((ticket) => ticket.assignedTo == userId && ticket.isFinished)
-        .toList();
+    return tickets.where((ticket) {
+      final isOwnAssignment = ticket.assignedTo == userId;
+      final isSupportMember = ticket.supportTechnicians.any(
+        (member) => member.id == userId,
+      );
+      final isJoinedByMember = ticket.isJoined || isSupportMember;
+      return (isOwnAssignment || isJoinedByMember) && ticket.isFinished;
+    }).toList();
   }
 
   Future<void> _fetchTickets() async {

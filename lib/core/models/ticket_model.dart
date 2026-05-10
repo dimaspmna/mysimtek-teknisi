@@ -19,6 +19,41 @@ String? _toNullableString(dynamic raw) {
   return text;
 }
 
+bool _toBool(dynamic raw) {
+  if (raw is bool) return raw;
+  if (raw is num) return raw != 0;
+  final text = raw?.toString().trim().toLowerCase();
+  return text == '1' || text == 'true' || text == 'yes';
+}
+
+List<TechnicianAssignment> _parseSupportTechnicians(Map<String, dynamic> json) {
+  final dynamic candidates =
+      json['support_technicians'] ??
+      json['support_members'] ??
+      json['supports'];
+
+  if (candidates is List) {
+    return candidates
+        .whereType<Map<String, dynamic>>()
+        .map(TechnicianAssignment.fromJson)
+        .toList();
+  }
+
+  final dynamic members = json['members'];
+  if (members is List) {
+    return members
+        .whereType<Map<String, dynamic>>()
+        .where((m) {
+          final role = (m['role'] ?? m['pivot']?['role'] ?? '').toString();
+          return role == 'support';
+        })
+        .map(TechnicianAssignment.fromJson)
+        .toList();
+  }
+
+  return const [];
+}
+
 class TicketMessage {
   final int id;
   final String message;
@@ -135,6 +170,20 @@ class TicketPhoto {
   }
 }
 
+class TechnicianAssignment {
+  final int id;
+  final String name;
+
+  TechnicianAssignment({required this.id, required this.name});
+
+  factory TechnicianAssignment.fromJson(Map<String, dynamic> json) {
+    return TechnicianAssignment(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      name: (json['name'] as String? ?? '-').trim(),
+    );
+  }
+}
+
 class Ticket {
   final int id;
   final String ticketNumber;
@@ -148,6 +197,11 @@ class Ticket {
   final String? resolution;
   final int? assignedTo;
   final String? assignerName;
+  final TechnicianAssignment? picTechnician;
+  final List<TechnicianAssignment> supportTechnicians;
+  final bool isPic;
+  final bool isSupport;
+  final bool canJoin;
   final String? customerName;
   final String? customerPhone;
   final String? customerAddress;
@@ -183,6 +237,11 @@ class Ticket {
     this.resolution,
     this.assignedTo,
     this.assignerName,
+    this.picTechnician,
+    this.supportTechnicians = const [],
+    this.isPic = false,
+    this.isSupport = false,
+    this.canJoin = false,
     this.customerName,
     this.customerPhone,
     this.customerAddress,
@@ -207,6 +266,7 @@ class Ticket {
   });
 
   bool get isClaimable => status == 'open' && assignedTo == null;
+  bool get isJoined => isPic || isSupport;
 
   factory Ticket.fromJson(Map<String, dynamic> json) {
     final msgList =
@@ -234,6 +294,15 @@ class Ticket {
       resolution: json['resolution'] as String?,
       assignedTo: json['assigned_to'] as int?,
       assignerName: json['assigner']?['name'] as String?,
+      picTechnician: json['pic_technician'] is Map<String, dynamic>
+          ? TechnicianAssignment.fromJson(
+              json['pic_technician'] as Map<String, dynamic>,
+            )
+          : null,
+      supportTechnicians: _parseSupportTechnicians(json),
+      isPic: _toBool(json['is_pic']),
+      isSupport: _toBool(json['is_support']),
+      canJoin: _toBool(json['can_join']),
       customerName: _toNullableString(json['customer']?['name']),
       customerPhone: _toNullableString(json['customer']?['phone']),
       customerAddress: _toNullableString(json['customer']?['address']),
@@ -288,6 +357,11 @@ class PsbTicket {
   final String? notes;
   final int? assignedTo;
   final String? assignerName;
+  final TechnicianAssignment? picTechnician;
+  final List<TechnicianAssignment> supportTechnicians;
+  final bool isPic;
+  final bool isSupport;
+  final bool canJoin;
   final String? customerName;
   final String? customerPhone;
   final String? customerAddress;
@@ -314,6 +388,11 @@ class PsbTicket {
     this.notes,
     this.assignedTo,
     this.assignerName,
+    this.picTechnician,
+    this.supportTechnicians = const [],
+    this.isPic = false,
+    this.isSupport = false,
+    this.canJoin = false,
     this.customerName,
     this.customerPhone,
     this.customerAddress,
@@ -331,6 +410,8 @@ class PsbTicket {
   bool get isClaimable {
     return assignedTo == null && status == 'open';
   }
+
+  bool get isJoined => isPic || isSupport;
 
   bool get isFinished {
     const finishedStatuses = {'done', 'closed'};
@@ -365,6 +446,15 @@ class PsbTicket {
       notes: json['notes'] as String?,
       assignedTo: json['assigned_to'] as int?,
       assignerName: json['assigner']?['name'] as String?,
+      picTechnician: json['pic_technician'] is Map<String, dynamic>
+          ? TechnicianAssignment.fromJson(
+              json['pic_technician'] as Map<String, dynamic>,
+            )
+          : null,
+      supportTechnicians: _parseSupportTechnicians(json),
+      isPic: _toBool(json['is_pic']),
+      isSupport: _toBool(json['is_support']),
+      canJoin: _toBool(json['can_join']),
       customerName: _toNullableString(json['customer']?['name']),
       customerPhone: _toNullableString(json['customer']?['phone']),
       customerAddress: _toNullableString(json['customer']?['address']),
